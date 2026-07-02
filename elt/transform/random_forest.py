@@ -100,5 +100,5 @@ class RandomForestBuilder:
         with open("/app/models/random_forest.pkl", "wb") as f:
             pickle.dump(modelo, f)
 
-        print(f"\nModelo guardado en /app/models/random_forest.pkl")
+        print(f"\nModelo guardado en /elt/models/random_forest.pkl")
         return modelo
