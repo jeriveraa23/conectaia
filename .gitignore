@@ -1,0 +1,43 @@
+# Variables de entorno
+.env
+*.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Modelos entrenados
+elt/models/
+*.pkl
+
+# Jupyter (por si acaso)
+.ipynb_checkpoints/
+*.ipynb
+
+# Docker volúmenes locales
+postgres_data/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Datos sensibles
+*.csv
+*.xlsx
+*.xls

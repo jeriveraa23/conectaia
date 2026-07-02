@@ -1,0 +1,6 @@
+pandas==2.2.2
+requests==2.31.0
+sqlalchemy==2.0.30
+psycopg2-binary==2.9.9
+kmodes==0.12.2
+scikit-learn==1.4.2
