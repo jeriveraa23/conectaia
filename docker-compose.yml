@@ -44,28 +44,30 @@ services:
       - "8888:8888"
     volumes:
       - ./elt:/app
-      - ./data:/app/data
+      - ./elt/data:/app/data
+      - ./elt/models:/app/models
 
- #  dashboard:
- #    build:
- #      context: ./dashboard
- #      dockerfile: ../docker/dashboard.Dockerfile
- #    container_name: conectaia_dashboard
- #    restart: unless-stopped
- #    depends_on:
- #      postgres:
- #        condition: service_healthy
- #    environment:
- #      POSTGRES_HOST: postgres
- #      POSTGRES_PORT: 5432
- #      POSTGRES_USER: ${POSTGRES_USER}
- #      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
- #      POSTGRES_DB: ${POSTGRES_DB}
- #    ports:
- #      - "8501:8501"
- #    volumes:
- #      - ./dashboard:/app
- #      - ./data:/app/data
+  dashboard:
+    build:
+      context: ./dashboard
+      dockerfile: ../docker/dashboard.Dockerfile
+    container_name: conectaia_dashboard
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./dashboard:/app
+      - ./elt/data:/app/data
+      - ./elt/models:/app/models
   
 volumes:
   postgres_data:

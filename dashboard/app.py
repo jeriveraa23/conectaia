@@ -1,0 +1,33 @@
+import streamlit as st
+from components.mapa import render_mapa
+from components.simulador import render_simulador
+
+st.set_page_config(
+    page_title="ConectaIA — Centros Digitales Rurales",
+    page_icon="🌐",
+    layout="wide"
+)
+
+st.markdown("""
+    <style>
+        iframe {
+            height: 700px !important;
+            width: 100% !important;
+        }
+        .block-container {
+            padding-top: 1rem;
+            padding-bottom: 0rem;
+        }
+    </style>
+""", unsafe_allow_html=True)
+
+st.title("🌐 ConectaIA — Impacto de los Centros Digitales Rurales")
+st.markdown("Análisis del impacto educativo de los Centros Digitales Rurales en Colombia · EPM & Julius AI")
+
+tab_mapa, tab_simulador = st.tabs(["Mapa de municipios", "Simulador de impacto"])
+
+with tab_mapa:
+    render_mapa()
+
+with tab_simulador:
+    render_simulador()
