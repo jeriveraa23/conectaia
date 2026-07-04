@@ -1,7 +1,7 @@
 streamlit==1.35.0
-pandas==2.2.2
-sqlalchemy==2.0.30
-psycopg2-binary==2.9.9
-folium==0.17.0
-streamlit-folium==0.22.0
-scikit-learn==1.4.2
+pandas
+sqlalchemy
+psycopg2-binary
+folium
+streamlit-folium
+scikit-learn
