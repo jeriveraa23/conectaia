@@ -13,10 +13,6 @@ dist/
 build/
 .eggs/
 
-# Modelos entrenados
-elt/models/
-*.pkl
-
 # Jupyter (por si acaso)
 .ipynb_checkpoints/
 *.ipynb
