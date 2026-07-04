@@ -6,14 +6,20 @@ from sqlalchemy import create_engine, text
 class Database:
 
     def __init__(self):
-        user = os.environ["POSTGRES_USER"]
-        password = os.environ["POSTGRES_PASSWORD"]
-        host = os.environ["POSTGRES_HOST"]
-        port = os.environ["POSTGRES_PORT"]
-        db = os.environ["POSTGRES_DB"]
+        host = os.environ['POSTGRES_HOST']
+        port = os.environ['POSTGRES_PORT']
+        user = os.environ['POSTGRES_USER']
+        password = os.environ['POSTGRES_PASSWORD']
+        db = os.environ['POSTGRES_DB']
 
-        url = f"postgresql+psycopg2://{user}:{password}@{host}:{port}/{db}"
-        self.engine = create_engine(url)
+        url = (
+            f"postgresql+psycopg2://{user}:{password}@{host}:{port}/{db}"
+            f"?host={host}&port={port}"
+        )
+        self.engine = create_engine(
+            url,
+            connect_args={"host": host, "port": int(port)}
+        )
 
     def _fix_numeric_columns(self, df):
         """Limpia columnas de texto que contienen números con formatos no estándar."""

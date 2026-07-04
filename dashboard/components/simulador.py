@@ -2,11 +2,13 @@ import pickle
 import pandas as pd
 import streamlit as st
 from db.connection import cargar_importancia, get_engine
+import os
 
 
 @st.cache_resource
 def cargar_modelo():
-    with open("/app/models/random_forest.pkl", "rb") as f:
+    ruta = os.path.join(os.path.dirname(__file__), "..", "models", "random_forest.pkl")
+    with open(ruta, "rb") as f:
         return pickle.load(f)
 
 

@@ -4,10 +4,12 @@ import streamlit as st
 from streamlit_folium import st_folium
 from db.connection import cargar_iec
 from utils.colores import color_por_iec, color_por_nivel
+import os
 
 
 def cargar_geojson():
-    with open("/app/data/shapefiles/municipios.geojson", "r", encoding="utf-8") as f:
+    ruta = os.path.join(os.path.dirname(__file__), "..", "data", "municipios.geojson")
+    with open(ruta, "r", encoding="utf-8") as f:
         return json.load(f)
 
 
