@@ -131,15 +131,15 @@ def render_mapa():
     with st.expander("⚙️ Filtros", expanded=True):
         col1, col2, col3, col4 = st.columns(4)
         with col1:
-            modo_color = st.radio("Colorear por:", ["IEC", "Nivel de efectividad"])
+            modo_color = st.radio("Colorear por:", ["IEC (Índice de Efectividad de Conectividad)", "Nivel de efectividad"])
         with col2:
             regiones   = ["Todas"] + sorted(iec_df["region"].dropna().unique().tolist())
             region_sel = st.selectbox("Región", regiones)
         with col3:
             nivel_sel  = st.selectbox("Nivel", ["Todos", "Alto", "Medio", "Bajo"])
         with col4:
-            solo_pdet  = st.checkbox("Solo PDET")
-            solo_cd    = st.checkbox("Solo con CD activo")
+            solo_pdet  = st.checkbox("Solo PDET (Programas de Desarrollo con Enfoque Territorial)")
+            solo_cd    = st.checkbox("Solo con Centro Digital activo")
 
     if modo_color == "IEC":
         st.markdown("**Leyenda (IEC)**: 🟢 75-100 · 🟡 60-74 · 🟠 45-59 · 🔴 0-44")
