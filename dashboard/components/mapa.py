@@ -71,30 +71,30 @@ def construir_mapa(iec_df, geojson, modo_color):
         tiles="CartoDB positron"
     )
 
-    folium.Choropleth(
-        geo_data=geojson,
-        data=iec_df,
-        columns=["codigo_municipio_men", "iec"],
-        key_on="feature.properties.MPIO_CCNCT",
-        fill_color="RdYlGn",
-        fill_opacity=0.7,
-        line_opacity=0.2,
-        legend_name="IEC (Índice de Efectividad de Conectividad)",
-        nan_fill_color="#eeeeee",
-    ).add_to(mapa)
-
     iec_dict = iec_df.set_index("codigo_municipio_men").to_dict("index")
 
+    def color_de(datos):
+        """Usa umbrales FIJOS (los mismos de la leyenda y las tarjetas),
+        nunca cuantiles relativos al conjunto filtrado."""
+        if datos is None:
+            return "#eeeeee"
+        if modo_color == "IEC":
+            return color_por_iec(datos.get("iec"))
+        return color_por_nivel(datos.get("nivel_efectividad"))
+
     def style_function(feature):
+        codigo = feature["properties"].get("MPIO_CCNCT")
+        datos = iec_dict.get(codigo)
         return {
-            "fillOpacity": 0,
-            "color": "transparent",
-            "weight": 0,
+            "fillColor": color_de(datos),
+            "fillOpacity": 0.75 if datos else 0.4,
+            "color": "#ffffff",
+            "weight": 0.6,
         }
 
     def highlight_function(feature):
         return {
-            "fillOpacity": 0.2,
+            "fillOpacity": 0.9,
             "color": "#333333",
             "weight": 2,
         }
@@ -141,7 +141,10 @@ def render_mapa():
             solo_pdet  = st.checkbox("Solo PDET")
             solo_cd    = st.checkbox("Solo con CD activo")
 
-    st.markdown("**Leyenda**: 🟢 75-100 · 🟡 60-74 · 🟠 45-59 · 🔴 0-44")
+    if modo_color == "IEC":
+        st.markdown("**Leyenda (IEC)**: 🟢 75-100 · 🟡 60-74 · 🟠 45-59 · 🔴 0-44")
+    else:
+        st.markdown("**Leyenda (Nivel de efectividad)**: 🟢 Alto · 🟠 Medio · 🔴 Bajo")
 
     df_filtrado = iec_df.copy()
     if region_sel != "Todas":
