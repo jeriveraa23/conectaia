@@ -133,8 +133,7 @@ def render_preguntas():
     st.subheader("💬 Pregúntale a los datos")
     st.markdown(
         "Escribe una pregunta en lenguaje natural sobre los municipios, "
-        "el IEC o los Centros Digitales. El asistente genera y ejecuta "
-        "una consulta SQL de solo lectura sobre las capas `silver`/`gold`."
+        "el IEC o los Centros Digitales."
     )
 
     with st.expander("Ejemplos de preguntas"):
