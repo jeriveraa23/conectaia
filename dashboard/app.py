@@ -1,6 +1,7 @@
 import streamlit as st
 from components.mapa import render_mapa
 from components.simulador import render_simulador
+from components.preguntas import render_preguntas
 
 st.set_page_config(
     page_title="ConectaIA — Centros Digitales Rurales",
@@ -24,10 +25,13 @@ st.markdown("""
 st.title("🌐 ConectaIA — Impacto de los Centros Digitales Rurales")
 st.markdown("Análisis del impacto educativo de los Centros Digitales Rurales en Colombia · EPM & Julius AI")
 
-tab_mapa, tab_simulador = st.tabs(["Mapa de municipios", "Simulador de impacto"])
+tab_mapa, tab_simulador, tab_preguntas = st.tabs(["Mapa de municipios", "Simulador de impacto", "Preguntas en lenguaje natural"])
 
 with tab_mapa:
     render_mapa()
 
 with tab_simulador:
     render_simulador()
+
+with tab_preguntas:
+    render_preguntas()
