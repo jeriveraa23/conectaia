@@ -12,7 +12,7 @@ from db.connection import get_engine
 # Google AI Studio y es más que suficiente para generar SQL + resúmenes.
 # Verifica el nombre de modelo vigente y las cuotas actuales en
 # https://ai.google.dev/pricing antes de desplegar a producción.
-MODEL_NAME = "gemini-2.0-flash"
+MODEL_NAME = "gemini-3.5-flash"
 
 # ---------------------------------------------------------------------------
 # Esquema disponible para el agente (solo silver/gold: son las capas
