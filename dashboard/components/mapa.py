@@ -8,6 +8,7 @@ from components.preguntas import _configurar_openai, MODEL_NAME
 import os
 
 
+@st.cache_data(show_spinner=False)
 def cargar_geojson():
     ruta = os.path.join(os.path.dirname(__file__), "..", "data", "municipios.geojson")
     with open(ruta, "r", encoding="utf-8") as f:
@@ -211,6 +212,30 @@ def construir_mapa(iec_df, geojson):
     return mapa
 
 
+@st.cache_resource(show_spinner="Construyendo mapa...")
+def _construir_mapa_cacheado(region_sel, nivel_sel, solo_pdet, solo_cd):
+    """Construye el folium.Map completo y lo guarda en caché por combinación
+    de filtros. Como el mapa NO depende de qué municipio esté seleccionado
+    ni de si se generó un análisis con GPT, esto evita reconstruir las ~1,122
+    capas (y su HTML) cada vez que el usuario hace clic en el mapa o en
+    'Generar análisis' — solo se reconstruye si de verdad cambian los filtros."""
+    iec_df  = cargar_iec()
+    geojson = cargar_geojson()
+
+    df_filtrado = iec_df.copy()
+    if region_sel != "Todas":
+        df_filtrado = df_filtrado[df_filtrado["region"] == region_sel]
+    if nivel_sel != "Todos":
+        df_filtrado = df_filtrado[df_filtrado["nivel_efectividad"] == nivel_sel]
+    if solo_pdet:
+        df_filtrado = df_filtrado[df_filtrado["es_pdet"] == True]
+    if solo_cd:
+        df_filtrado = df_filtrado[df_filtrado["tiene_centro_digital"] == True]
+
+    mapa = construir_mapa(df_filtrado, geojson)
+    return mapa, len(df_filtrado)
+
+
 def render_mapa():
     st.markdown(
         "Este mapa muestra el **IEC (Índice de Efectividad de Conectividad)** de cada "
@@ -221,9 +246,9 @@ def render_mapa():
 
     if st.button("🔄 Recargar datos"):
         st.cache_data.clear()
+        st.cache_resource.clear()
 
-    iec_df  = cargar_iec()
-    geojson = cargar_geojson()
+    iec_df = cargar_iec()
 
     with st.expander("⚙️ Filtros", expanded=True):
         col1, col2, col3 = st.columns(3)
@@ -238,19 +263,8 @@ def render_mapa():
 
     st.markdown("**Leyenda (IEC)**: 🟢 75-100 · 🟡 60-74 · 🟠 45-59 · 🔴 0-44 · ⬛ Sin dato")
 
-    df_filtrado = iec_df.copy()
-    if region_sel != "Todas":
-        df_filtrado = df_filtrado[df_filtrado["region"] == region_sel]
-    if nivel_sel != "Todos":
-        df_filtrado = df_filtrado[df_filtrado["nivel_efectividad"] == nivel_sel]
-    if solo_pdet:
-        df_filtrado = df_filtrado[df_filtrado["es_pdet"] == True]
-    if solo_cd:
-        df_filtrado = df_filtrado[df_filtrado["tiene_centro_digital"] == True]
-
-    st.markdown(f"**{len(df_filtrado)} municipios** seleccionados")
-
-    mapa = construir_mapa(df_filtrado, geojson)
+    mapa, n_municipios = _construir_mapa_cacheado(region_sel, nivel_sel, solo_pdet, solo_cd)
+    st.markdown(f"**{n_municipios} municipios** seleccionados")
 
     contenedor = st.container()
     with contenedor:
