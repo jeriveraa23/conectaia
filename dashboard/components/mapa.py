@@ -18,7 +18,13 @@ def construir_popup(datos):
     nivel = datos.get('nivel_efectividad', 'N/A')
     diferencia = datos.get('diferencia_vs_cluster', 0)
 
-    color_nivel = {"Alto": "#1a9641", "Medio": "#f77f00", "Bajo": "#d7191c"}.get(nivel, "#666")
+    # El color principal de la tarjeta lo determina el IEC (KPI principal),
+    # con los mismos umbrales fijos que el resto del dashboard.
+    color_iec = color_por_iec(iec)
+    # La efectividad relativa a municipios similares es información
+    # secundaria: se muestra, pero con un color propio y discreto que NO
+    # afecta el color general de la tarjeta.
+    color_nivel_secundario = {"Alto": "#1a9641", "Medio": "#e08e00", "Bajo": "#d7191c"}.get(nivel, "#888")
     signo = "+" if diferencia > 0 else ""
 
     return f"""
@@ -29,16 +35,21 @@ def construir_popup(datos):
             </p>
 
             <div style="
-                background:{color_nivel}22;
-                border-left: 4px solid {color_nivel};
-                padding: 6px 10px;
+                background:{color_iec}22;
+                border-left: 4px solid {color_iec};
+                padding: 8px 10px;
                 border-radius: 4px;
                 margin-bottom: 8px;
             ">
-                <b style="color:{color_nivel};">Efectividad {nivel}</b>
-                <span style="font-size:10px; color:#999;">(vs. municipios similares)</span><br>
-                <span style="font-size:13px;">IEC: <b>{round(iec, 1)}</b> / 100</span>
+                <span style="font-size:11px; color:#666;">IEC (Índice de Efectividad de Conectividad)</span><br>
+                <span style="font-size:26px; font-weight:700; color:{color_iec};">{round(iec, 1)}</span>
+                <span style="font-size:13px; color:#888;"> / 100</span>
             </div>
+
+            <p style="margin:0 0 8px 0; font-size:12px; color:#666;">
+                Efectividad <b style="color:{color_nivel_secundario};">{nivel}</b> vs. municipios similares
+                ({signo}{round(diferencia, 1)} pts)
+            </p>
 
             <table style="width:100%; font-size:12px; border-collapse:collapse;">
                 <tr>
@@ -57,7 +68,6 @@ def construir_popup(datos):
 
             <hr style="margin:8px 0; border-color:#eee;">
             <p style="margin:0; font-size:11px; color:#666;">
-                vs municipios similares: <b style="color:{color_nivel};">{signo}{round(diferencia, 1)} pts</b><br>
                 {'✅ Centro Digital activo' if datos.get('tiene_centro_digital') else '❌ Sin Centro Digital'}
                 {'· 🏔️ Zona PDET' if datos.get('es_pdet') else ''}
             </p>
