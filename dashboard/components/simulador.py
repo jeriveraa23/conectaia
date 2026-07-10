@@ -1,8 +1,12 @@
 import os
+import json
 import pickle
 import pandas as pd
+import folium
 import streamlit as st
-from db.connection import get_engine, cargar_iec, cargar_importancia
+from streamlit_folium import st_folium
+from openai import OpenAI
+from db.connection import get_engine, cargar_importancia
 
 
 @st.cache_resource
@@ -39,35 +43,22 @@ def cargar_municipios():
 
 
 @st.cache_data
-def cargar_perfil_clusters():
-    return pd.read_sql("""
-        SELECT 
-            mc.cluster,
-            COUNT(*) as n_municipios,
-            AVG(fm.desercion_pre_2020) as desercion_promedio,
-            AVG(fm.poblacion_5_16) as poblacion_promedio,
-            MODE() WITHIN GROUP (ORDER BY fm.region) as region_predominante,
-            AVG(mi.iec) as iec_promedio
-        FROM silver.municipios_clusterizados mc
-        JOIN silver.features_municipio fm 
-            ON mc.codigo_municipio_men = fm.codigo_municipio_men
-        JOIN gold.municipios_iec mi 
-            ON mc.codigo_municipio_men = mi.codigo_municipio_men
-        GROUP BY mc.cluster
-        ORDER BY mc.cluster
-    """, get_engine())
+def cargar_geojson():
+    ruta = os.path.join(os.path.dirname(__file__), "..", "data", "municipios.geojson")
+    with open(ruta, "r", encoding="utf-8") as f:
+        return json.load(f)
 
 
 RANGOS_INVERSION = {
-    "Baja (menos de $200M)":      100_000_000,
-    "Media ($200M - $500M)":      350_000_000,
-    "Alta (más de $500M)":        750_000_000,
+    "Baja (menos de $200M)":  100_000_000,
+    "Media ($200M - $500M)":  350_000_000,
+    "Alta (más de $500M)":    750_000_000,
 }
 
 RANGOS_USUARIOS = {
-    "Pocos (menos de 30)":        15,
-    "Moderados (30 - 100)":       65,
-    "Muchos (más de 100)":        150,
+    "Pocos (menos de 30)":    15,
+    "Moderados (30 - 100)":   65,
+    "Muchos (más de 100)":    150,
 }
 
 COLORES_NIVEL = {
@@ -75,6 +66,103 @@ COLORES_NIVEL = {
     "Medio": "#f77f00",
     "Bajo":  "#d7191c",
 }
+
+
+def explicar_con_openai(municipio, departamento, region, cluster, iec, iec_promedio_cluster,
+                         diferencia, nivel_predicho, n_sedes, inversion_sel, usuarios_sel, es_pdet):
+    client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+
+    prompt = f"""
+Eres un analista de datos educativos de Colombia. Explica en 3 párrafos cortos y en lenguaje claro 
+para un alcalde o funcionario público (no técnico) por qué el municipio de {municipio} ({departamento}) 
+obtuvo un nivel de efectividad "{nivel_predicho}" en el simulador de Centros Digitales Rurales.
+
+Datos del municipio:
+- Región: {region}
+- IEC actual: {iec:.1f} sobre 100
+- IEC promedio de municipios similares (grupo territorial {cluster}): {iec_promedio_cluster:.1f}
+- Diferencia vs grupo: {diferencia:+.1f} puntos
+- Número de sedes simuladas: {n_sedes}
+- Inversión estimada: {inversion_sel}
+- Usuarios esperados por mes: {usuarios_sel}
+- Zona PDET: {"Sí" if es_pdet else "No"}
+
+En el primer párrafo explica qué significa el nivel "{nivel_predicho}" y cómo se compara el municipio 
+con otros de su grupo territorial. En el segundo párrafo explica qué factores del Centro Digital 
+influyen más en este resultado. En el tercer párrafo da una recomendación práctica para mejorar 
+o mantener la efectividad. Sé directo, evita tecnicismos y usa máximo 150 palabras en total.
+"""
+
+    response = client.chat.completions.create(
+        model="gpt-3.5-turbo",
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=300,
+        temperature=0.7,
+    )
+    return response.choices[0].message.content
+
+
+def construir_mapa_simulacion(geojson, codigo_municipio, municipio, iec_real,
+                               iec_promedio_cluster, nivel_predicho, diferencia):
+    mapa = folium.Map(location=[4.5, -74.0], zoom_start=5, tiles="CartoDB positron")
+    color_pred = COLORES_NIVEL.get(nivel_predicho, "#666")
+    signo = "+" if diferencia > 0 else ""
+
+    for feature in geojson["features"]:
+        codigo = feature["properties"].get("MPIO_CCNCT")
+
+        if codigo == codigo_municipio:
+            popup_html = f"""
+                <div style="font-family:Arial; min-width:220px;">
+                    <h4 style="margin:0; color:#222;">{municipio}</h4>
+                    <div style="
+                        background:{color_pred}22;
+                        border-left:4px solid {color_pred};
+                        padding:6px 10px;
+                        border-radius:4px;
+                        margin:8px 0;
+                    ">
+                        <b style="color:{color_pred};">Efectividad simulada: {nivel_predicho}</b>
+                    </div>
+                    <table style="width:100%; font-size:12px;">
+                        <tr>
+                            <td style="color:#555;">IEC actual</td>
+                            <td style="text-align:right;"><b>{iec_real:.1f}</b>/100</td>
+                        </tr>
+                        <tr>
+                            <td style="color:#555;">IEC promedio del grupo</td>
+                            <td style="text-align:right;"><b>{iec_promedio_cluster:.1f}</b>/100</td>
+                        </tr>
+                        <tr>
+                            <td style="color:#555;">Diferencia vs grupo</td>
+                            <td style="text-align:right; color:{color_pred};"><b>{signo}{diferencia:.1f} pts</b></td>
+                        </tr>
+                    </table>
+                </div>
+            """
+            folium.GeoJson(
+                feature,
+                style_function=lambda x, c=color_pred: {
+                    "fillColor": c,
+                    "color": "#333",
+                    "weight": 2,
+                    "fillOpacity": 0.8,
+                },
+                tooltip=municipio,
+                popup=folium.Popup(popup_html, max_width=280),
+            ).add_to(mapa)
+        else:
+            folium.GeoJson(
+                feature,
+                style_function=lambda x: {
+                    "fillColor": "#dddddd",
+                    "color": "#ffffff",
+                    "weight": 0.3,
+                    "fillOpacity": 0.5,
+                },
+            ).add_to(mapa)
+
+    return mapa
 
 
 def render_simulador():
@@ -85,7 +173,7 @@ def render_simulador():
     )
 
     municipios_df = cargar_municipios()
-    perfil_clusters = cargar_perfil_clusters()
+    geojson = cargar_geojson()
     modelo = cargar_modelo()
 
     # ── Formulario ────────────────────────────────────────────────────────────
@@ -101,9 +189,7 @@ def render_simulador():
 
         n_sedes = st.number_input(
             "Número de sedes con Centro Digital",
-            min_value=1,
-            max_value=100,
-            value=5,
+            min_value=1, max_value=100, value=5,
             help="¿En cuántas instituciones educativas del municipio estará disponible el Centro Digital?"
         )
 
@@ -123,8 +209,8 @@ def render_simulador():
         es_pdet = st.checkbox(
             "¿Es zona PDET?",
             help=(
-                "Las zonas PDET (Programas de Desarrollo con Enfoque Territorial) son territorios "
-                "priorizados por el gobierno para la construcción de paz y el desarrollo rural en Colombia."
+                "Las zonas PDET son territorios priorizados por el gobierno "
+                "para la construcción de paz y el desarrollo rural en Colombia."
             )
         )
 
@@ -136,8 +222,19 @@ def render_simulador():
     vel_subida = float(mun["velocidad_subida_prom"]) if pd.notna(mun["velocidad_subida_prom"]) else 3.5
     vel_bajada = float(mun["velocidad_bajada_prom"]) if pd.notna(mun["velocidad_bajada_prom"]) else 14.0
 
-    # Info del grupo territorial
-    perfil = perfil_clusters[perfil_clusters["cluster"] == cluster]
+    # Perfil del grupo territorial
+    regiones_cluster = pd.read_sql(f"""
+        SELECT fm.region, COUNT(*) as n
+        FROM silver.municipios_clusterizados mc
+        JOIN silver.features_municipio fm 
+            ON mc.codigo_municipio_men = fm.codigo_municipio_men
+        WHERE mc.cluster = {cluster}
+        GROUP BY fm.region
+        ORDER BY n DESC
+    """, get_engine())
+
+    n_total_cluster = regiones_cluster["n"].sum()
+    iec_promedio_cluster = float(mun["iec_promedio_cluster_sin_cd"]) if pd.notna(mun["iec_promedio_cluster_sin_cd"]) else 0.0
 
     with st.expander("📊 Ver perfil del Grupo territorial de este municipio", expanded=False):
         st.markdown(f"""
@@ -152,13 +249,15 @@ def render_simulador():
             - 📉 **Deserción histórica** — cómo venía el municipio antes de 2020
         """)
 
-        if not perfil.empty:
-            p = perfil.iloc[0]
-            col_a, col_b, col_c, col_d = st.columns(4)
-            col_a.metric("Municipios en este grupo", int(p["n_municipios"]))
-            col_b.metric("Región predominante", p["region_predominante"])
-            col_c.metric("IEC promedio del grupo", f"{p['iec_promedio']:.1f}")
-            col_d.metric("Deserción promedio histórica", f"{p['desercion_promedio']:.1f}%")
+        col_a, col_b = st.columns(2)
+        col_a.metric("Municipios en este grupo", int(n_total_cluster))
+        col_a.metric("IEC promedio del grupo", f"{iec_promedio_cluster:.1f}")
+
+        with col_b:
+            st.markdown("**Composición por región:**")
+            for _, row in regiones_cluster.iterrows():
+                pct = row["n"] / n_total_cluster * 100
+                st.markdown(f"- {row['region']}: **{int(row['n'])}** municipios ({pct:.0f}%)")
 
     st.divider()
 
@@ -178,6 +277,8 @@ def render_simulador():
         probabilidades = modelo.predict_proba(entrada)[0]
         clases         = modelo.classes_
         color          = COLORES_NIVEL.get(prediccion, "#666")
+        diferencia     = float(mun["diferencia_vs_cluster"]) if pd.notna(mun["diferencia_vs_cluster"]) else 0.0
+        iec_real       = float(mun["iec"]) if pd.notna(mun["iec"]) else 0.0
 
         # Resultado principal
         st.markdown(f"""
@@ -200,18 +301,12 @@ def render_simulador():
 
         # Métricas comparativas
         col1, col2, col3 = st.columns(3)
-        col1.metric(
-            "IEC actual del municipio",
-            f"{mun['iec']:.1f}" if pd.notna(mun['iec']) else "Sin datos",
-        )
-        col2.metric(
-            "IEC promedio del grupo territorial",
-            f"{mun['iec_promedio_cluster_sin_cd']:.1f}" if pd.notna(mun['iec_promedio_cluster_sin_cd']) else "Sin datos",
-        )
+        col1.metric("IEC actual del municipio", f"{iec_real:.1f}")
+        col2.metric("IEC promedio del grupo territorial", f"{iec_promedio_cluster:.1f}")
         col3.metric(
             "Diferencia vs grupo",
-            f"{mun['diferencia_vs_cluster']:+.1f} pts" if pd.notna(mun['diferencia_vs_cluster']) else "Sin datos",
-            delta=f"{mun['diferencia_vs_cluster']:+.1f}" if pd.notna(mun['diferencia_vs_cluster']) else None,
+            f"{diferencia:+.1f} pts",
+            delta=f"{diferencia:+.1f}",
         )
 
         # Probabilidades
@@ -235,3 +330,35 @@ def render_simulador():
             "es_pdet":                "Zona PDET",
         })
         st.bar_chart(importancia_df.set_index("variable")["importancia"])
+
+        # Explicación con OpenAI
+        st.markdown("### 💡 ¿Por qué este resultado?")
+        with st.spinner("Generando análisis..."):
+            explicacion = explicar_con_openai(
+                municipio=mun["municipio"],
+                departamento=mun["departamento"],
+                region=mun["region"],
+                cluster=cluster,
+                iec=iec_real,
+                iec_promedio_cluster=iec_promedio_cluster,
+                diferencia=diferencia,
+                nivel_predicho=prediccion,
+                n_sedes=n_sedes,
+                inversion_sel=inversion_sel,
+                usuarios_sel=usuarios_sel,
+                es_pdet=es_pdet,
+            )
+        st.markdown(explicacion)
+
+        # Mapa de simulación
+        st.markdown("### 🗺️ Municipio simulado en el mapa")
+        mapa_sim = construir_mapa_simulacion(
+            geojson=geojson,
+            codigo_municipio=mun["codigo_municipio_men"],
+            municipio=mun["municipio"],
+            iec_real=iec_real,
+            iec_promedio_cluster=iec_promedio_cluster,
+            nivel_predicho=prediccion,
+            diferencia=diferencia,
+        )
+        st_folium(mapa_sim, use_container_width=True, height=500, returned_objects=[], key="mapa_simulacion")
