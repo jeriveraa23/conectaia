@@ -49,14 +49,20 @@ st.markdown("""
             width: auto !important;
         }
         [class*="st-key-chat_flotante"] button {
-            border-radius: 50% !important;
-            width: 56px !important;
-            height: 56px !important;
-            font-size: 22px !important;
+            border-radius: 30px !important;
+            padding: 10px 20px !important;
+            font-size: 15px !important;
+            font-weight: 600 !important;
             box-shadow: 0 4px 14px rgba(0,0,0,0.35) !important;
             background-color: #CA5E50 !important;
             color: white !important;
             border: none !important;
+            animation: pulso-chat 2.5s infinite;
+        }
+        @keyframes pulso-chat {
+            0%   { box-shadow: 0 4px 14px rgba(202,94,80,0.5), 0 0 0 0 rgba(202,94,80,0.6); }
+            70%  { box-shadow: 0 4px 14px rgba(202,94,80,0.5), 0 0 0 12px rgba(202,94,80,0); }
+            100% { box-shadow: 0 4px 14px rgba(202,94,80,0.5), 0 0 0 0 rgba(202,94,80,0); }
         }
     </style>
 """, unsafe_allow_html=True)
