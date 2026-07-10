@@ -121,11 +121,10 @@ def render_simulador():
         colores = {"Alto": "green", "Medio": "orange", "Bajo": "red"}
         color   = colores.get(prediccion, "gray")
 
-        # --- Justificación en lenguaje natural, basada en las 2 variables
-        # más importantes del modelo y el promedio histórico de Centros
-        # Digitales activos (silver.dataset_integrado) ---
+        # --- Recomendación orientada al usuario final: qué variables ---
+        # --- conviene mejorar para subir de nivel, no cómo funciona el modelo ---
         promedios = cargar_dataset().mean(numeric_only=True)
-        top_vars = importancia_df["variable"].tolist()[:2]
+        top_vars = importancia_df["variable"].tolist()[:3]
 
         valores_usuario = {
             "usuarios_activos_prom": usuarios,
@@ -136,32 +135,53 @@ def render_simulador():
         }
 
         nombres_legibles = {
-            "usuarios_activos_prom": "usuarios activos mensuales",
-            "inversion_total": "inversión total",
-            "velocidad_subida_prom": "velocidad de subida",
-            "velocidad_bajada_prom": "velocidad de bajada",
-            "n_centros_digitales": "número de sedes",
+            "usuarios_activos_prom": "el uso mensual del Centro Digital (usuarios activos)",
+            "inversion_total": "la inversión total",
+            "velocidad_subida_prom": "la velocidad de subida de internet",
+            "velocidad_bajada_prom": "la velocidad de bajada de internet",
+            "n_centros_digitales": "el número de sedes con Centro Digital",
         }
 
-        frases = []
+        fortalezas = []
+        mejoras = []
         for var in top_vars:
             if var not in valores_usuario or var not in promedios:
                 continue
             valor_usuario = valores_usuario[var]
             promedio = promedios[var]
-            comparacion = "por encima" if valor_usuario >= promedio else "por debajo"
-            frases.append(
-                f"el **{nombres_legibles.get(var, var)}** que ingresaste "
-                f"({valor_usuario:,.1f}) está **{comparacion}** del promedio histórico "
-                f"de Centros Digitales activos ({promedio:,.1f}), y es la variable con "
-                f"mayor peso en el modelo ({importancia_df.set_index('variable').loc[var, 'importancia']:.0%})"
-            )
+            nombre = nombres_legibles.get(var, var)
+            if valor_usuario >= promedio:
+                fortalezas.append(nombre)
+            else:
+                mejoras.append(nombre)
 
-        justificacion = (
-            "El modelo llegó a esta predicción principalmente porque " + "; además, ".join(frases) + "."
-            if frases else
-            "No fue posible calcular una justificación detallada para esta combinación de valores."
-        )
+        if prediccion == "Alto":
+            if fortalezas:
+                justificacion = (
+                    "¡Buen resultado! Los valores que ingresaste en "
+                    f"{', '.join(fortalezas)} están en un buen nivel, y son justamente "
+                    "los factores que más influyen en la efectividad de un Centro Digital. "
+                    "Mantener estos valores ayuda a sostener este nivel."
+                )
+            else:
+                justificacion = (
+                    "El modelo predice un nivel Alto para esta combinación de valores. "
+                    "Mantener estas condiciones ayuda a sostener este resultado."
+                )
+        elif mejoras:
+            justificacion = (
+                "Para lograr un nivel más alto de efectividad, te recomendamos enfocar "
+                f"esfuerzos en mejorar {', '.join(mejoras)}, ya que son de los factores "
+                "que más influyen en el resultado y actualmente están por debajo del "
+                "promedio de los Centros Digitales activos."
+            )
+        else:
+            justificacion = (
+                "Los valores ingresados ya están en línea con el promedio de los Centros "
+                "Digitales activos en los factores más influyentes. Para subir de nivel, "
+                "considera reforzar aún más el uso mensual del centro por parte de la "
+                "comunidad, que sigue siendo el factor de mayor peso."
+            )
 
         st.markdown(f"""
             <div style="
@@ -181,4 +201,4 @@ def render_simulador():
             </div>
         """, unsafe_allow_html=True)
 
-        st.markdown(f"**¿Por qué esta predicción?** {justificacion}")
+        st.markdown(f"**Recomendación:** {justificacion}")
