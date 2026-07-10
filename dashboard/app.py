@@ -1,7 +1,7 @@
 import streamlit as st
 from components.mapa import render_mapa
 from components.simulador import render_simulador
-from components.preguntas import render_preguntas
+from components.preguntas import render_chat_flotante
 
 st.set_page_config(
     page_title="ConectaIA — Centros Digitales Rurales",
@@ -35,13 +35,32 @@ st.markdown("""
         [data-testid="stStatusWidget"] * {
             color: #ffffff !important;
         }
+
+        /* Botón de chat flotante: fijo abajo a la derecha, sobre toda la app */
+        [class*="st-key-chat_flotante"] {
+            position: fixed !important;
+            bottom: 24px;
+            right: 24px;
+            z-index: 9999;
+            width: auto !important;
+        }
+        [class*="st-key-chat_flotante"] button {
+            border-radius: 50% !important;
+            width: 56px !important;
+            height: 56px !important;
+            font-size: 22px !important;
+            box-shadow: 0 4px 14px rgba(0,0,0,0.35) !important;
+            background-color: #CA5E50 !important;
+            color: white !important;
+            border: none !important;
+        }
     </style>
 """, unsafe_allow_html=True)
 
 st.title("🌐 ConectaIA — Impacto de los Centros Digitales Rurales")
 st.markdown("Análisis del impacto educativo de los Centros Digitales Rurales en Colombia · EPM & Julius AI")
 
-tab_mapa, tab_simulador, tab_preguntas = st.tabs(["Mapa de municipios", "Simulador de impacto", "Preguntas en lenguaje natural"])
+tab_mapa, tab_simulador = st.tabs(["Mapa de municipios", "Simulador de impacto"])
 
 with tab_mapa:
     render_mapa()
@@ -49,5 +68,4 @@ with tab_mapa:
 with tab_simulador:
     render_simulador()
 
-with tab_preguntas:
-    render_preguntas()
+render_chat_flotante()
