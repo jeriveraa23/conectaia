@@ -64,6 +64,7 @@ def render_simulador():
             step=50_000_000,
             format="%d"
         )
+        st.caption(f"💰 ${inversion:,.0f} COP".replace(",", "."))
         usuarios = st.number_input(
             "Usuarios activos mensuales (promedio)",
             min_value=0,
