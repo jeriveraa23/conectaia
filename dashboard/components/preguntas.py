@@ -2,15 +2,18 @@ import os
 import re
 import pandas as pd
 import streamlit as st
-import google.generativeai as genai
+from openai import OpenAI
 from db.connection import get_engine
 
 # ---------------------------------------------------------------------------
 # Configuración del modelo
 # ---------------------------------------------------------------------------
-# Verifica el nombre de modelo vigente y las cuotas actuales en
-# https://ai.google.dev/pricing antes de desplegar a producción.
-MODEL_NAME = "gemini-2.0-flash"
+# gpt-4o-mini es, al momento de escribir esto, el modelo más económico de la
+# familia GPT-4o de OpenAI — más que suficiente para generar SQL simple y
+# resúmenes cortos. Verifica el nombre y precio vigentes en
+# https://openai.com/api/pricing antes de desplegar a producción, por si
+# OpenAI lo reemplazó por uno más nuevo.
+MODEL_NAME = "gpt-4o-mini"
 
 MAX_PREGUNTAS_SESION = 3
 
@@ -57,16 +60,25 @@ PALABRAS_PROHIBIDAS = [
 ]
 
 
-def _configurar_gemini() -> bool:
-    api_key = os.environ.get("GEMINI_API_KEY")
+def _configurar_openai() -> OpenAI | None:
+    """Busca la API key primero en st.secrets (Streamlit Cloud) y, si no
+    existe, en las variables de entorno (uso local con .env)."""
+    api_key = None
+    try:
+        api_key = st.secrets.get("OPENAI_API_KEY")
+    except Exception:
+        pass
+    if not api_key:
+        api_key = os.environ.get("OPENAI_API_KEY")
+
     if not api_key:
         st.error(
-            "Falta la variable de entorno GEMINI_API_KEY. "
-            "Consíguela gratis en https://aistudio.google.com/apikey"
+            "Falta la variable OPENAI_API_KEY. Agrégala en Streamlit Cloud "
+            "en Settings → Secrets, o en tu .env local."
         )
-        return False
-    genai.configure(api_key=api_key)
-    return True
+        return None
+
+    return OpenAI(api_key=api_key)
 
 
 def _extraer_sql(texto_respuesta: str) -> str:
@@ -85,8 +97,8 @@ def _es_query_segura(sql: str) -> tuple[bool, str]:
     return True, ""
 
 
-def _generar_sql(modelo, pregunta: str) -> str:
-    prompt = f"""Eres un asistente que traduce preguntas en español a consultas SQL
+def _generar_sql(client: OpenAI, pregunta: str) -> str:
+    system_prompt = f"""Eres un asistente que traduce preguntas en español a consultas SQL
 de PostgreSQL, usando EXCLUSIVAMENTE el siguiente esquema:
 
 {ESQUEMA_DESCRIPCION}
@@ -96,16 +108,20 @@ Reglas:
 - Solo genera consultas SELECT (nunca INSERT/UPDATE/DELETE/DDL).
 - Usa nombres de columnas y tablas exactamente como aparecen arriba, con su esquema (ej. gold.municipios_iec).
 - Si la pregunta pide un "top N" o un listado, agrega siempre LIMIT 50 como máximo.
-- Si la pregunta no se puede responder con este esquema, responde exactamente: NO_DISPONIBLE
+- Si la pregunta no se puede responder con este esquema, responde exactamente: NO_DISPONIBLE"""
 
-Pregunta: {pregunta}
+    respuesta = client.chat.completions.create(
+        model=MODEL_NAME,
+        temperature=0,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": pregunta},
+        ],
+    )
+    return _extraer_sql(respuesta.choices[0].message.content)
 
-SQL:"""
-    respuesta = modelo.generate_content(prompt)
-    return _extraer_sql(respuesta.text)
 
-
-def _generar_respuesta_natural(modelo, pregunta: str, df: pd.DataFrame) -> str:
+def _generar_respuesta_natural(client: OpenAI, pregunta: str, df: pd.DataFrame) -> str:
     tabla_muestra = df.head(20).to_markdown(index=False)
     prompt = f"""El usuario preguntó: "{pregunta}"
 
@@ -116,17 +132,20 @@ Estos son los resultados de la consulta a la base de datos (máximo 20 filas mos
 Responde en español, en un párrafo breve y claro, la pregunta original
 basándote SOLO en estos datos. Si es útil, menciona cifras concretas.
 No inventes datos que no estén en la tabla."""
-    respuesta = modelo.generate_content(prompt)
-    return respuesta.text.strip()
+
+    respuesta = client.chat.completions.create(
+        model=MODEL_NAME,
+        temperature=0.3,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    return respuesta.choices[0].message.content.strip()
 
 
-def _procesar_pregunta(pregunta: str) -> str:
-    modelo = genai.GenerativeModel(MODEL_NAME)
-
+def _procesar_pregunta(client: OpenAI, pregunta: str) -> str:
     try:
-        sql = _generar_sql(modelo, pregunta)
+        sql = _generar_sql(client, pregunta)
     except Exception as e:
-        return f"No pude conectarme con Gemini: {e}"
+        return f"No pude conectarme con el modelo: {e}"
 
     if sql.strip().upper() == "NO_DISPONIBLE":
         return (
@@ -144,7 +163,7 @@ def _procesar_pregunta(pregunta: str) -> str:
         return f"Hubo un error consultando la base de datos: {e}"
 
     try:
-        return _generar_respuesta_natural(modelo, pregunta, df)
+        return _generar_respuesta_natural(client, pregunta, df)
     except Exception:
         if df.empty:
             return "La consulta no arrojó resultados para esa pregunta."
@@ -152,8 +171,7 @@ def _procesar_pregunta(pregunta: str) -> str:
 
 
 def render_chat_flotante():
-    """Botón de chat flotante (abajo a la derecha), visible en toda la app.
-    Reemplaza la antigua pestaña de 'Preguntas en lenguaje natural'."""
+    """Botón de chat flotante (abajo a la derecha), visible en toda la app."""
 
     if "chat_historial" not in st.session_state:
         st.session_state.chat_historial = []
@@ -178,7 +196,8 @@ def render_chat_flotante():
                 )
                 return
 
-            if not _configurar_gemini():
+            client = _configurar_openai()
+            if client is None:
                 return
 
             pregunta = st.chat_input("Escribe tu pregunta...")
@@ -186,6 +205,6 @@ def render_chat_flotante():
                 st.session_state.chat_historial.append(("user", pregunta))
                 st.session_state.preguntas_usadas += 1
                 with st.spinner("Consultando los datos..."):
-                    respuesta = _procesar_pregunta(pregunta)
+                    respuesta = _procesar_pregunta(client, pregunta)
                 st.session_state.chat_historial.append(("assistant", respuesta))
                 st.rerun()
