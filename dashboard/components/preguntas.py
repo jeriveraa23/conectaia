@@ -179,7 +179,7 @@ def render_chat_flotante():
         st.session_state.preguntas_usadas = 0
 
     with st.container(key="chat_flotante"):
-        with st.popover("💬", help="Pregúntale a los datos"):
+        with st.popover("💬 ¿Dudas? Pregúntame", help="Pregúntale a los datos"):
             st.markdown("**💬 Pregúntale a los datos**")
 
             restantes = MAX_PREGUNTAS_SESION - st.session_state.preguntas_usadas
