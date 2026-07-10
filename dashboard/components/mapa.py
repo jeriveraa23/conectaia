@@ -3,7 +3,7 @@ import folium
 import streamlit as st
 from streamlit_folium import st_folium
 from db.connection import cargar_iec
-from utils.colores import color_por_iec, color_por_nivel
+from utils.colores import color_por_iec
 import os
 
 
@@ -35,7 +35,8 @@ def construir_popup(datos):
                 border-radius: 4px;
                 margin-bottom: 8px;
             ">
-                <b style="color:{color_nivel};">Efectividad {nivel}</b><br>
+                <b style="color:{color_nivel};">Efectividad {nivel}</b>
+                <span style="font-size:10px; color:#999;">(vs. municipios similares)</span><br>
                 <span style="font-size:13px;">IEC: <b>{round(iec, 1)}</b> / 100</span>
             </div>
 
@@ -64,12 +65,28 @@ def construir_popup(datos):
     """
 
 
-def construir_mapa(iec_df, geojson, modo_color):
+# Bounding box real de Colombia (calculado a partir de data/municipios.geojson),
+# con un pequeño margen. Se usa para que el mapa arranque centrado en el país
+# y no se pueda alejar hasta ver el mundo completo.
+COLOMBIA_BOUNDS = [[-5.2, -83.0], [14.2, -65.8]]  # [[sur, oeste], [norte, este]]
+
+# Gris más oscuro para municipios sin dato de IEC (antes casi invisible sobre
+# el fondo claro del mapa base).
+COLOR_SIN_DATO = "#8a8a8a"
+
+
+def construir_mapa(iec_df, geojson):
     mapa = folium.Map(
         location=[4.5, -74.0],
         zoom_start=5,
-        tiles="CartoDB positron"
+        tiles="CartoDB positron",
+        min_zoom=5,
+        max_bounds=True,
     )
+    mapa.fit_bounds(COLOMBIA_BOUNDS)
+    # Evita que el usuario arrastre el mapa muy lejos de Colombia.
+    mapa.options["maxBounds"] = COLOMBIA_BOUNDS
+    mapa.options["maxBoundsViscosity"] = 1.0
 
     iec_dict = iec_df.set_index("codigo_municipio_men").to_dict("index")
 
@@ -77,17 +94,15 @@ def construir_mapa(iec_df, geojson, modo_color):
         """Usa umbrales FIJOS (los mismos de la leyenda y las tarjetas),
         nunca cuantiles relativos al conjunto filtrado."""
         if datos is None:
-            return "#eeeeee"
-        if modo_color == "IEC":
-            return color_por_iec(datos.get("iec"))
-        return color_por_nivel(datos.get("nivel_efectividad"))
+            return COLOR_SIN_DATO
+        return color_por_iec(datos.get("iec"))
 
     def style_function(feature):
         codigo = feature["properties"].get("MPIO_CCNCT")
         datos = iec_dict.get(codigo)
         return {
             "fillColor": color_de(datos),
-            "fillOpacity": 0.75 if datos else 0.4,
+            "fillOpacity": 0.75,
             "color": "#ffffff",
             "weight": 0.6,
         }
@@ -99,9 +114,17 @@ def construir_mapa(iec_df, geojson, modo_color):
             "weight": 2,
         }
 
+    tooltip_style = (
+        "font-size:14px; font-weight:600; color:#222; "
+        "background-color:#ffffff; padding:6px 10px; "
+        "border:1px solid #999; border-radius:4px;"
+    )
+
     for feature in geojson["features"]:
         codigo = feature["properties"].get("MPIO_CCNCT")
         datos = iec_dict.get(codigo)
+        # Nombre visible en el tooltip, sin importar si tiene datos o no.
+        feature["properties"]["_nombre_tooltip"] = feature["properties"].get("MPIO_CNMBR", "Desconocido")
 
         if datos:
             popup_html = construir_popup(datos)
@@ -114,7 +137,12 @@ def construir_mapa(iec_df, geojson, modo_color):
             feature,
             style_function=style_function,
             highlight_function=highlight_function,
-            tooltip=feature["properties"].get("MPIO_CNMBR", ""),
+            tooltip=folium.GeoJsonTooltip(
+                fields=["_nombre_tooltip"],
+                aliases=["Municipio:"],
+                style=tooltip_style,
+                sticky=True,
+            ),
             popup=popup,
         ).add_to(mapa)
 
@@ -122,6 +150,13 @@ def construir_mapa(iec_df, geojson, modo_color):
 
 
 def render_mapa():
+    st.markdown(
+        "Este mapa muestra el **IEC (Índice de Efectividad de Conectividad)** de cada "
+        "municipio colombiano, en una escala de 0 a 100. Usa los filtros para acotar por "
+        "región, nivel de efectividad, zona PDET o presencia de Centro Digital. "
+        "Haz clic sobre un municipio para ver el detalle completo de sus componentes."
+    )
+
     if st.button("🔄 Recargar datos"):
         st.cache_data.clear()
 
@@ -129,22 +164,17 @@ def render_mapa():
     geojson = cargar_geojson()
 
     with st.expander("⚙️ Filtros", expanded=True):
-        col1, col2, col3, col4 = st.columns(4)
+        col1, col2, col3 = st.columns(3)
         with col1:
-            modo_color = st.radio("Colorear por:", ["IEC (Índice de Efectividad de Conectividad)", "Nivel de efectividad"])
-        with col2:
             regiones   = ["Todas"] + sorted(iec_df["region"].dropna().unique().tolist())
             region_sel = st.selectbox("Región", regiones)
+        with col2:
+            nivel_sel  = st.selectbox("Nivel de efectividad", ["Todos", "Alto", "Medio", "Bajo"])
         with col3:
-            nivel_sel  = st.selectbox("Nivel", ["Todos", "Alto", "Medio", "Bajo"])
-        with col4:
-            solo_pdet  = st.checkbox("Solo PDET (Programas de Desarrollo con Enfoque Territorial)")
-            solo_cd    = st.checkbox("Solo con Centro Digital activo")
+            solo_pdet  = st.checkbox("Solo PDET")
+            solo_cd    = st.checkbox("Solo con CD activo")
 
-    if modo_color == "IEC":
-        st.markdown("**Leyenda (IEC)**: 🟢 75-100 · 🟡 60-74 · 🟠 45-59 · 🔴 0-44")
-    else:
-        st.markdown("**Leyenda (Nivel de efectividad)**: 🟢 Alto · 🟠 Medio · 🔴 Bajo")
+    st.markdown("**Leyenda (IEC)**: 🟢 75-100 · 🟡 60-74 · 🟠 45-59 · 🔴 0-44 · ⬛ Sin dato")
 
     df_filtrado = iec_df.copy()
     if region_sel != "Todas":
@@ -158,7 +188,7 @@ def render_mapa():
 
     st.markdown(f"**{len(df_filtrado)} municipios** seleccionados")
 
-    mapa = construir_mapa(df_filtrado, geojson, modo_color)
+    mapa = construir_mapa(df_filtrado, geojson)
 
     contenedor = st.container()
     with contenedor:
