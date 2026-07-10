@@ -4,6 +4,7 @@ import streamlit as st
 from streamlit_folium import st_folium
 from db.connection import cargar_iec
 from utils.colores import color_por_iec
+from components.preguntas import _configurar_openai, MODEL_NAME
 import os
 
 
@@ -11,6 +12,57 @@ def cargar_geojson():
     ruta = os.path.join(os.path.dirname(__file__), "..", "data", "municipios.geojson")
     with open(ruta, "r", encoding="utf-8") as f:
         return json.load(f)
+
+
+def generar_analisis_municipio(client, datos) -> str:
+    """Pide a GPT una lectura breve y NO técnica de las métricas de un
+    municipio, pensada para alguien sin conocimientos de estadística o
+    del proyecto."""
+    prompt = f"""Eres un asistente que explica datos educativos a personas sin
+formación técnica (por ejemplo, un alcalde, un docente o un ciudadano).
+
+Datos del municipio "{datos.get('municipio')}" ({datos.get('departamento')}, región {datos.get('region')}):
+- IEC (Índice de Efectividad de Conectividad, 0 a 100): {round(datos.get('iec', 0), 1)}
+- Nivel de efectividad comparado con municipios similares: {datos.get('nivel_efectividad', 'N/A')}
+  (diferencia de {round(datos.get('diferencia_vs_cluster', 0), 1)} puntos vs. el promedio de municipios
+  parecidos que NO tienen Centro Digital)
+- Retención estudiantil: {round(datos.get('componente_desercion', 0), 1)}/100
+- Cobertura escolar: {round(datos.get('componente_cobertura', 0), 1)}/100
+- Tasa de aprobación: {round(datos.get('componente_aprobacion', 0), 1)}/100
+- ¿Tiene Centro Digital activo?: {"Sí" if datos.get('tiene_centro_digital') else "No"}
+- ¿Es zona PDET?: {"Sí" if datos.get('es_pdet') else "No"}
+
+Escribe un análisis de 3 a 5 frases, en español, SIN tecnicismos ni jerga
+estadística (nada de "percentiles", "terciles", "z-score", etc.). Explica en
+lenguaje cotidiano qué tan bien le va al municipio, qué significa eso en la
+práctica para los estudiantes, y una idea concreta de qué se podría mejorar.
+No repitas los números tal cual, intégralos de forma natural en el texto."""
+
+    respuesta = client.chat.completions.create(
+        model=MODEL_NAME,
+        temperature=0.4,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    return respuesta.choices[0].message.content.strip()
+
+
+GLOSARIO = [
+    ("IEC (Índice de Efectividad de Conectividad)",
+     "Un puntaje de 0 a 100 que resume qué tan bien le va a un municipio en lo educativo. "
+     "Se calcula combinando retención estudiantil, cobertura escolar y tasa de aprobación."),
+    ("Efectividad (Alto / Medio / Bajo)",
+     "Compara al municipio contra otros parecidos que NO tienen Centro Digital. Si un municipio "
+     "supera bastante a esos similares, su efectividad es 'Alta' — aunque su IEC en términos "
+     "absolutos no sea muy alto."),
+    ("Retención estudiantil",
+     "Qué tantos estudiantes se quedan en el colegio en vez de abandonarlo (lo contrario a la "
+     "deserción escolar). Más alto es mejor."),
+    ("Cobertura escolar",
+     "Qué porcentaje de niños y jóvenes en edad escolar (5 a 16 años) están efectivamente "
+     "matriculados en el grado que les corresponde."),
+    ("Tasa de aprobación",
+     "Qué porcentaje de estudiantes matriculados aprueba el año escolar."),
+]
 
 
 def construir_popup(datos):
@@ -202,10 +254,54 @@ def render_mapa():
 
     contenedor = st.container()
     with contenedor:
-        st_folium(
+        resultado_click = st_folium(
             mapa,
             use_container_width=True,
             height=650,
-            returned_objects=[],
+            returned_objects=["last_active_drawing"],
             key="mapa_principal"
         )
+
+    # --- Panel del municipio seleccionado (clic en el mapa) -----------------
+    if resultado_click and resultado_click.get("last_active_drawing"):
+        propiedades = resultado_click["last_active_drawing"].get("properties", {})
+        codigo_click = propiedades.get("MPIO_CCNCT")
+        if codigo_click:
+            st.session_state["municipio_seleccionado"] = codigo_click
+
+    iec_dict_completo = iec_df.set_index("codigo_municipio_men").to_dict("index")
+    codigo_sel = st.session_state.get("municipio_seleccionado")
+    datos_sel = iec_dict_completo.get(codigo_sel) if codigo_sel else None
+
+    if "analisis_municipios" not in st.session_state:
+        st.session_state.analisis_municipios = {}
+
+    if datos_sel:
+        with st.container(border=True):
+            st.markdown(f"### 📍 {datos_sel['municipio']} · {datos_sel['departamento']}")
+
+            c1, c2, c3, c4, c5 = st.columns(5)
+            c1.metric("IEC", f"{datos_sel['iec']:.1f}")
+            c2.metric("Efectividad", datos_sel.get("nivel_efectividad", "N/A"))
+            c3.metric("Retención", f"{datos_sel.get('componente_desercion', 0):.1f}")
+            c4.metric("Cobertura", f"{datos_sel.get('componente_cobertura', 0):.1f}")
+            c5.metric("Aprobación", f"{datos_sel.get('componente_aprobacion', 0):.1f}")
+
+            if st.button("🧠 Generar análisis", key=f"btn_analisis_{codigo_sel}"):
+                client = _configurar_openai()
+                if client:
+                    with st.spinner("Generando análisis..."):
+                        texto = generar_analisis_municipio(client, datos_sel)
+                    st.session_state.analisis_municipios[codigo_sel] = texto
+
+            if codigo_sel in st.session_state.analisis_municipios:
+                st.info(st.session_state.analisis_municipios[codigo_sel])
+    else:
+        st.caption("👆 Haz clic sobre un municipio en el mapa para ver su detalle y generar un análisis con IA.")
+
+    # --- Glosario -------------------------------------------------------
+    st.divider()
+    st.markdown("#### 📖 Glosario de términos")
+    for termino, definicion in GLOSARIO:
+        with st.expander(termino):
+            st.markdown(definicion)
