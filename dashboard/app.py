@@ -36,12 +36,16 @@ st.markdown("""
             color: #ffffff !important;
         }
 
-        /* Botón de chat flotante: fijo abajo a la derecha, sobre toda la app */
+        /* Botón de chat flotante: fijo abajo a la derecha, sobre toda la app.
+           Se sube a 100px del borde inferior y con z-index muy alto para
+           quedar POR ENCIMA de los íconos propios de Streamlit Cloud
+           (badge de "Manage app" / deployment), que también son fixed
+           bottom-right y si no, tapan nuestro botón. */
         [class*="st-key-chat_flotante"] {
             position: fixed !important;
-            bottom: 24px;
+            bottom: 100px;
             right: 24px;
-            z-index: 9999;
+            z-index: 999999 !important;
             width: auto !important;
         }
         [class*="st-key-chat_flotante"] button {
