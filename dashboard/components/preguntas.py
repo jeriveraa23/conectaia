@@ -8,11 +8,11 @@ from db.connection import get_engine
 # ---------------------------------------------------------------------------
 # Configuración del modelo
 # ---------------------------------------------------------------------------
-# Usamos un modelo Flash: es el que tiene el free tier más generoso en
-# Google AI Studio y es más que suficiente para generar SQL + resúmenes.
 # Verifica el nombre de modelo vigente y las cuotas actuales en
 # https://ai.google.dev/pricing antes de desplegar a producción.
-MODEL_NAME = "gemini-3.5-flash"
+MODEL_NAME = "gemini-2.0-flash"
+
+MAX_PREGUNTAS_SESION = 3
 
 # ---------------------------------------------------------------------------
 # Esquema disponible para el agente (solo silver/gold: son las capas
@@ -56,21 +56,13 @@ PALABRAS_PROHIBIDAS = [
     "create", "grant", "revoke", "--", "/*", ";", "copy", "call",
 ]
 
-EJEMPLOS_PREGUNTAS = [
-    "¿Cuáles son los 5 municipios con mayor IEC que tienen centro digital?",
-    "¿Cuál es el IEC promedio por región?",
-    "¿Qué municipios en zona PDET tienen nivel de efectividad Alto?",
-    "¿Cuántos municipios por cluster no tienen centro digital?",
-]
 
-
-def _configurar_gemini():
+def _configurar_gemini() -> bool:
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
         st.error(
             "Falta la variable de entorno GEMINI_API_KEY. "
-            "Consíguela gratis en https://aistudio.google.com/apikey "
-            "y agrégala a tu .env"
+            "Consíguela gratis en https://aistudio.google.com/apikey"
         )
         return False
     genai.configure(api_key=api_key)
@@ -78,7 +70,6 @@ def _configurar_gemini():
 
 
 def _extraer_sql(texto_respuesta: str) -> str:
-    """Limpia bloques de markdown (```sql ... ```) que el modelo pueda incluir."""
     match = re.search(r"```(?:sql)?\s*(.*?)```", texto_respuesta, re.DOTALL | re.IGNORECASE)
     sql = match.group(1) if match else texto_respuesta
     return sql.strip().rstrip(";").strip()
@@ -87,10 +78,10 @@ def _extraer_sql(texto_respuesta: str) -> str:
 def _es_query_segura(sql: str) -> tuple[bool, str]:
     sql_lower = sql.lower()
     if not sql_lower.strip().startswith("select"):
-        return False, "La consulta generada no es un SELECT. Por seguridad no se ejecuta."
+        return False, "Esa pregunta generó una consulta que no es de solo lectura, así que no se ejecuta."
     for palabra in PALABRAS_PROHIBIDAS:
         if palabra in sql_lower:
-            return False, f"La consulta contiene un término no permitido ('{palabra}')."
+            return False, f"La consulta generada contiene un término no permitido ('{palabra}')."
     return True, ""
 
 
@@ -129,66 +120,72 @@ No inventes datos que no estén en la tabla."""
     return respuesta.text.strip()
 
 
-def render_preguntas():
-    st.subheader("💬 Pregúntale a los datos")
-    st.markdown(
-        "Escribe una pregunta en lenguaje natural sobre los municipios, "
-        "el IEC o los Centros Digitales."
-    )
+def _procesar_pregunta(pregunta: str) -> str:
+    modelo = genai.GenerativeModel(MODEL_NAME)
 
-    with st.expander("Ejemplos de preguntas"):
-        for ej in EJEMPLOS_PREGUNTAS:
-            st.markdown(f"- {ej}")
+    try:
+        sql = _generar_sql(modelo, pregunta)
+    except Exception as e:
+        return f"No pude conectarme con Gemini: {e}"
 
-    if not _configurar_gemini():
-        return
+    if sql.strip().upper() == "NO_DISPONIBLE":
+        return (
+            "No puedo responder esa pregunta con los datos disponibles del proyecto "
+            "(municipios, IEC, clusters, Centros Digitales)."
+        )
 
-    pregunta = st.text_input(
-        "Tu pregunta",
-        placeholder="Ej: ¿Cuáles son los 5 municipios con mayor IEC que tienen centro digital?",
-    )
+    segura, motivo = _es_query_segura(sql)
+    if not segura:
+        return motivo
 
-    if st.button("🔎 Preguntar", use_container_width=True) and pregunta:
-        modelo = genai.GenerativeModel(MODEL_NAME)
+    try:
+        df = pd.read_sql(sql, get_engine())
+    except Exception as e:
+        return f"Hubo un error consultando la base de datos: {e}"
 
-        with st.spinner("Generando consulta SQL..."):
-            try:
-                sql = _generar_sql(modelo, pregunta)
-            except Exception as e:
-                st.error(f"Error llamando a Gemini: {e}")
+    try:
+        return _generar_respuesta_natural(modelo, pregunta, df)
+    except Exception:
+        if df.empty:
+            return "La consulta no arrojó resultados para esa pregunta."
+        return f"Encontré estos resultados, pero no pude redactar el resumen:\n\n{df.head(20).to_markdown(index=False)}"
+
+
+def render_chat_flotante():
+    """Botón de chat flotante (abajo a la derecha), visible en toda la app.
+    Reemplaza la antigua pestaña de 'Preguntas en lenguaje natural'."""
+
+    if "chat_historial" not in st.session_state:
+        st.session_state.chat_historial = []
+    if "preguntas_usadas" not in st.session_state:
+        st.session_state.preguntas_usadas = 0
+
+    with st.container(key="chat_flotante"):
+        with st.popover("💬", help="Pregúntale a los datos"):
+            st.markdown("**💬 Pregúntale a los datos**")
+
+            restantes = MAX_PREGUNTAS_SESION - st.session_state.preguntas_usadas
+            st.caption(f"{max(restantes, 0)} de {MAX_PREGUNTAS_SESION} preguntas disponibles en esta sesión.")
+
+            for rol, contenido in st.session_state.chat_historial:
+                with st.chat_message(rol):
+                    st.markdown(contenido)
+
+            if restantes <= 0:
+                st.info(
+                    "Alcanzaste el límite de preguntas de esta sesión. "
+                    "Recarga la página para reiniciar."
+                )
                 return
 
-        if sql.strip().upper() == "NO_DISPONIBLE":
-            st.warning(
-                "No puedo responder esa pregunta con los datos disponibles "
-                "en el esquema silver/gold del proyecto."
-            )
-            return
-
-        segura, motivo = _es_query_segura(sql)
-        if not segura:
-            st.error(motivo)
-            with st.expander("Ver consulta generada (rechazada)"):
-                st.code(sql, language="sql")
-            return
-
-        with st.spinner("Consultando la base de datos..."):
-            try:
-                df = pd.read_sql(sql, get_engine())
-            except Exception as e:
-                st.error(f"Error ejecutando la consulta: {e}")
-                with st.expander("Ver consulta generada"):
-                    st.code(sql, language="sql")
+            if not _configurar_gemini():
                 return
 
-        with st.spinner("Redactando respuesta..."):
-            try:
-                respuesta_texto = _generar_respuesta_natural(modelo, pregunta, df)
-                st.markdown(respuesta_texto)
-            except Exception as e:
-                st.warning(f"No se pudo redactar el resumen ({e}), pero aquí están los datos:")
-
-        st.dataframe(df, use_container_width=True, hide_index=True)
-
-        with st.expander("Ver consulta SQL generada"):
-            st.code(sql, language="sql")
+            pregunta = st.chat_input("Escribe tu pregunta...")
+            if pregunta:
+                st.session_state.chat_historial.append(("user", pregunta))
+                st.session_state.preguntas_usadas += 1
+                with st.spinner("Consultando los datos..."):
+                    respuesta = _procesar_pregunta(pregunta)
+                st.session_state.chat_historial.append(("assistant", respuesta))
+                st.rerun()
