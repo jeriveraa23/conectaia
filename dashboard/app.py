@@ -19,6 +19,22 @@ st.markdown("""
             padding-top: 1rem;
             padding-bottom: 0rem;
         }
+
+        /* Indicador de carga: Streamlit ya muestra automáticamente un ícono
+           de "Running..." cada vez que cambias un filtro/control y la app
+           se recalcula. Aquí lo agrandamos y le damos color para que sea
+           evidente que el dashboard está procesando el cambio. */
+        [data-testid="stStatusWidget"] {
+            transform: scale(1.6);
+            transform-origin: top right;
+            background-color: #62A7B4;
+            border-radius: 8px;
+            padding: 4px 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+        }
+        [data-testid="stStatusWidget"] * {
+            color: #ffffff !important;
+        }
     </style>
 """, unsafe_allow_html=True)
 
