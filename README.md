@@ -1,198 +1,244 @@
-# ConectaIA — Análisis del Impacto de los Centros Digitales Rurales en Colombia
+# ConectaIA — ¿Los Centros Digitales Rurales mejoran la educación en Colombia?
 
-## Descripción General
+  > **Una plataforma de inteligencia de datos que mide, compara y simula el impacto educativo de los Centros Digitales Rurales en los municipios colombianos.**
 
-ConectaIA es un proyecto de ingeniería de datos e inteligencia artificial desarrollado como propuesta para la competencia de datos abiertos. El objetivo es medir y clasificar el impacto educativo de los centros digitales rurales en los municipios de Colombia, utilizando datos abiertos del Ministerio de Educación Nacional (MEN) y del Ministerio de Tecnologías de la Información y las Comunicaciones (MinTIC).
+  ---
 
-La pregunta central que responde el proyecto es: **¿los Centros Digitales Rurales están asociados a mejores resultados educativos en los municipios donde operan, en comparación con municipios de perfil territorial similar que no los tienen?**
+  ## ¿De qué trata este proyecto?
 
----
+  Colombia ha invertido en instalar **Centros Digitales Rurales (CD)** en municipios de todo el país: espacios con conectividad a internet, computadores y personal de apoyo, pensados para reducir la brecha
+  digital en zonas alejadas. Pero surge una pregunta natural: **¿realmente están funcionando?**
 
-## Arquitectura
+  ConectaIA responde esa pregunta usando datos oficiales del Gobierno Nacional, inteligencia artificial y visualizaciones interactivas. El resultado es una plataforma que cualquier persona, funcionario
+  público, investigador, periodista o ciudadano interesado, puede usar para entender qué está pasando en cada municipio, compararlo con sus pares, y simular qué pasaría si se cambian las condiciones del centro
+   digital.
 
-El proyecto implementa una arquitectura de datos medallones (Bronze → Silver → Gold) sobre PostgreSQL con PostGIS, orquestada mediante un pipeline ELT en Python. Todo el entorno corre en contenedores Docker.
+  La pregunta que guía todo el proyecto es:
 
-```
-bronze/     → datos crudos tal cual vienen de las fuentes (Socrata API)
-silver/     → datos limpios, integrados y con campos calculadas
-gold/       → productos analíticos finales: IEC(Índeice de efectividad de conectividad), clustering, modelo Random Forest (Clasificación)
-```
+  > **¿Los municipios que tienen un Centro Digital activo muestran mejores resultados educativos que municipios similares que no lo tienen?**
 
-### Stack tecnológico
+  ---
 
-- **Orquestación**: Python 3.11, Docker Compose
-- **Base de datos**: PostgreSQL 16 + PostGIS
-- **Procesamiento**: pandas, scikit-learn, kmodes
-- **Fuentes de datos**: API Socrata (datos.gov.co)
+  ## ¿De dónde vienen los datos?
 
----
+  ConectaIA no inventa información. Todo parte de **datos abiertos publicados por el Gobierno colombiano** en el portal [datos.gov.co](https://datos.gov.co), específicamente tres fuentes oficiales:
 
-## Fuentes de Datos
+  ### 1. Centros Digitales Rurales, MinTIC
+  Publicado por el Ministerio de Tecnologías de la Información y las Comunicaciones. Contiene información de cada sede con centro digital en el país: cuánto se invirtió, cuántos usuarios activos tiene al mes,
+  a qué velocidades sube y baja datos, si está en zona rural, y cuál es su estado (en operación, en instalación o en planeación). Esta fuente tiene **14.057 registros** de sedes individuales a lo largo del
+  territorio nacional.
 
-| Dataset | Fuente | Filas | Descripción |
-|---|---|---|---|
-| Centros Digitales Rurales | MinTIC / Socrata `fybg-535s` | 14,057 | Una fila por sede educativa con centro digital |
-| DIVIPOLA | DANE / Socrata `gdxc-w37w` | 1,122 | Códigos y nombres oficiales de municipios |
-| Estadísticas Educación MEN | MEN / Socrata `nudc-7mev` | 15,707 | Indicadores educativos por municipio y año (2011-2024) |
+  ### 2. DIVIPOLA, DANE
+  El listado oficial de municipios de Colombia con sus nombres y códigos únicos. Es la referencia que permite conectar información de distintas fuentes bajo un mismo identificador. Contiene los **1.122
+  municipios** del país.
 
----
+  ### 3. Estadísticas Educativas, Ministerio de Educación Nacional (MEN)
+  Indicadores educativos por municipio y año, desde 2011 hasta 2024. Incluye tres métricas clave: **tasa de deserción escolar** (cuántos niños abandonan el colegio), **cobertura neta** (qué porcentaje de niños
+   en edad escolar están matriculados en el grado correcto), y **tasa de aprobación** (cuántos estudiantes pasan el año). Esta fuente tiene **15.707 registros** históricos.
 
-## Pipeline ELT — Hitos
+  ---
 
-### Hito 1 — Extracción a Bronze
+  ## ¿Cómo se cruza y organiza la información?
 
-Se extrajeron los tres datasets desde la API Socrata de datos.gov.co usando paginación estable con el parámetro `$order=:id`, que garantiza que no haya solapamiento entre páginas consecutivas (problema que causaba registros duplicados sin este ordenamiento). Cada dataset se cargó en su tabla bronze correspondiente, respetando los nombres de columna definidos en el esquema SQL — no los nombres que devuelve Socrata internamente. Se implementó un mecanismo de reintentos automáticos para manejar la inestabilidad ocasional de la API. Los números con formato de coma decimal (`"3,75"`) y separador de miles (`"1,174,274"`) se normalizaron automáticamente antes de la carga.
+  Los datos llegan en formatos distintos, con nombres de municipios diferentes y estructuras incompatibles entre sí. ConectaIA los transforma en una base de datos organizada en **tres capas**, como si fuera
+  una fábrica de datos:
 
-**Tablas creadas**: `bronze.centros_digitales`, `bronze.divipola`, `bronze.educacion_men`
+  ```
+  Datos crudos  →  Datos limpios  →  Resultados finales
+    (Bronce)          (Plata)             (Oro)
+  ```
 
----
+  ### Capa Bronce: los datos tal como llegan
+  Los tres conjuntos de datos se descargan directamente desde la API oficial y se guardan sin modificar. Esta capa existe como respaldo fiel de la fuente original.
 
-### Hito 2 — Crosswalk de Municipios (Silver)
+  ### Capa Plata: datos limpios e integrados
+  Aquí ocurre el trabajo de preparación. El principal reto es que cada fuente llama diferente a los mismos municipios. Por ejemplo:
 
-El principal desafío de integración fue que las tres fuentes usan nombres de municipio distintos para referirse al mismo lugar. Centros Digitales usa nombres abreviados (`"CUCUTA"`, `"CALI"`, `"MOMPOS"`), mientras que DIVIPOLA usa los nombres oficiales (`"SAN JOSE DE CUCUTA"`, `"SANTIAGO DE CALI"`, `"SANTA CRUZ DE MOMPOX"`). Adicionalmente, algunos nombres en centros digitales tienen caracteres mal codificados por problemas de encoding en el origen (`"CHACHAGsI"` en vez de `"CHACHAGÜÍ"`, `"MAGsI"` en vez de `"MAGÜÍ"`).
+  - MinTIC dice **"CUCUTA"**
+  - El DANE dice **"SAN JOSE DE CUCUTA"**
+  - Algunos registros tienen problemas de caracteres: **"CHACHAGsI"** en lugar de **"CHACHAGÜÍ"**
 
-Se construyó una tabla puente que resuelve este problema en dos pasos: primero un match automático por texto estandarizado (sin tildes, en mayúsculas) que resolvió 1,072 de los 1,104 municipios únicos, y luego 31 correcciones manuales verificadas una por una contra el listado oficial de DIVIPOLA. Solo 1 municipio quedó sin resolver (Mapiripana, Guainía — que no existe como municipio independiente en DIVIPOLA).
+  Para resolver esto, se construyó una **tabla puente** que empareja los nombres de cada fuente con el código oficial del municipio. Este proceso fue en dos pasos: primero se hizo automáticamente con texto
+  estandarizado (sin tildes, en mayúsculas), resolviendo 1.072 de los 1.104 municipios. Los 31 restantes se corrigieron manualmente, uno por uno, verificando contra el listado oficial del DANE.
 
-Todos los códigos de municipio se estandarizaron al formato de 5 dígitos con ceros a la izquierda (ej. `"05001"`) para garantizar consistencia en los joins posteriores.
+  Con los nombres resueltos, se construye la **tabla integrada**: una fila por municipio y año que combina los indicadores educativos con las características del centro digital (si existe). Solo se incluyen
+  centros en **estado OPERACIÓN**, los que están en instalación o planeación no se cuentan porque todavía no han tenido impacto real.
 
-**Tablas creadas**: `silver.crosswalk_municipios`
+  ### Capa Oro: los productos finales de análisis
+  Con los datos limpios y unidos, se calculan los indicadores clave: el IEC, los grupos territoriales y las predicciones del modelo. Esta capa es lo que alimenta el tablero interactivo.
 
----
+  ---
 
-### Hito 3 — Dataset Integrado (Silver)
+  ## ¿Cómo se crean características adicionales por municipio?
 
-Se construyó la tabla central de trabajo combinando las tres fuentes. El proceso tuvo tres pasos principales: 
-primero se agregaron las sedes de Centros Digitales por municipio. pero **solo las sedes en estado OPERACION** (8,601 de 14,057), excluyendo las que están en INSTALACION o PLANEACION porque no han tenido impacto educativo aún. Esto definió qué municipios realmente tienen un centro digital activo. Luego se usó el crosswalk para obtener el código de municipio de cada centro digital, y finalmente se hizo un join con educación MEN, que tiene una fila por municipio y año (2011-2024). Las variables de centros digitales (inversión, usuarios, velocidad) se repiten iguales en todos los años del mismo municipio, porque son un snapshot o fecha de corte de 2023.
+  Para poder comparar municipios de forma justa, primero hay que entender bien a cada uno. Por eso se calculan **variables de perfil territorial** que no vienen directamente en los datos originales sino que se
+   construyen a partir de ellos:
 
-El resultado es una tabla con granularidad municipio-año: 15,704 filas, 1,037 municipios únicos, donde cada fila combina los indicadores educativos de ese año con las características del CD del municipio.
+  - **Deserción histórica y reciente**: Se separa el promedio de deserción antes y después de 2020 para detectar el impacto de la pandemia en cada municipio, y se calcula la brecha entre ambos períodos.
+  - **Región geográfica**: Se clasifica cada municipio en una de las cinco grandes regiones de Colombia (Andina, Caribe, Pacífica, Orinoquía, Amazonía), basándose en su departamento.
+  - **Índice de ruralidad**: Qué proporción de las sedes del municipio están en zona rural (solo disponible para municipios con CD).
+  - **Dificultad de acceso**: Qué tan difícil es llegar físicamente al municipio, medido por el nivel de dificultad reportado en las sedes del centro digital.
+  - **Población en edad escolar**: El promedio de niños y jóvenes entre 5 y 16 años, que es la población objetivo del sistema educativo.
 
-**Tablas creadas**: `silver.dataset_integrado`
+  ---
 
----
+  ## ¿Cómo se agrupan los municipios en grupos similares?
 
-### Hito 4 — Features por Municipio (Silver)
+  No tiene sentido comparar un municipio pequeño y aislado de la Amazonía con una ciudad intermedia del Eje Cafetero. Para que la comparación sea justa, ConectaIA agrupa los municipios en **6 grupos
+  territoriales** usando un algoritmo de inteligencia artificial llamado **K-Prototypes**, que trabaja con datos mixtos (numéricos y de categorías al mismo tiempo).
 
-Se calcularon las variables de perfil territorial de cada municipio, algunas necesarias para el clustering. Las variables calculadas fueron:
+  Los tres criterios de agrupación son:
+  1. **Región geográfica**, para que los municipios comparados estén en contextos similares
+  2. **Tamaño de población escolar**, para no comparar municipios de tamaños muy distintos
+  3. **Nivel histórico de deserción escolar**, para que los puntos de partida educativos sean parecidos
 
-- **Deserción pre/post 2020**: promedio de la tasa de deserción escolar en los periodos 2011-2019 y 2020-2024, y la brecha entre ambos periodos
-- **Región**: mapeo de departamento a región (Andina, Caribe, Pacífica, Orinoquía, Amazonía)
-- **Índice de ruralidad**: sedes del municipio ubicadas en zona rural, calculado a partir de centros digitales y mapeado al municipio via crosswalk por código (no por nombre, para evitar problemas de encoding)
-- **Dificultad de acceso**: valor más frecuente de dificultad de acceso reportado entre las sedes del municipio
-- **Población en edad escolar**: promedio de la población entre 5 y 16 años
+  Cada grupo reúne municipios con y sin centro digital de perfil similar. Esto es clave: cuando se evalúa si un CD mejoró algo, la comparación se hace contra municipios del **mismo grupo que no tienen CD**, no
+   contra el promedio nacional.
 
-Los 248 municipios sin CD no tienen índice de ruralidad ni dificultad de acceso (esas variables solo existen en el dataset de Centros Digitales). Se dejaron en NULL de forma intencional — eliminar o inventar valores distorsionaría el análisis posterior.
+  ---
 
-**Tablas creadas**: `silver.features_municipio`
+  ## ¿Qué es el IEC y cómo se calcula?
 
----
+  El **IEC (Índice de Efectividad de Conectividad)** es el corazón del proyecto. Es un **número de 0 a 100** que resume la situación educativa de un municipio en un solo valor. Cuanto más alto, mejor.
 
-### Hito 5 — Clustering de Municipios (Silver)
+  Se construye combinando tres indicadores educativos con diferentes pesos según su importancia:
 
-Para poder comparar municipios de forma justa, se agruparon en clusters de perfil territorial similar usando el algoritmo **K-Prototypes** (versión de K-Means que maneja variables mixtas, numéricas y categóricas). Las variables de clustering seleccionadas fueron las tres disponibles para todos los municipios (con y sin centro digital):
+  | Componente | Peso | ¿Qué mide? |
+  |---|---|---|
+  | Tasa de deserción escolar | **40%** | Cuántos niños abandonan el colegio (invertido: menos deserción = mejor puntaje) |
+  | Cobertura neta | **35%** | Qué porcentaje de niños en edad escolar están matriculados en el grado correcto |
+  | Tasa de aprobación | **25%** | Qué proporción de estudiantes pasan el año |
 
-- `region` — variable categórica
-- `poblacion_5_16` — variable numérica, normalizada con StandardScaler
-- `desercion_pre_2020` — variable numérica, normalizada con StandardScaler
+  Cada componente se normaliza a una escala de 0 a 100 antes de combinarse, para que sean comparables entre sí.
 
-Se usaron 6 clusters. El resultado fue una distribución con municipios con centro digital y sin centro digital en cada cluster, lo que permite la comparación dentro de cada grupo. Los clusters 1 y 4 tienen pocos municipios sin CD (4 y 1 respectivamente), lo que limita la robustez de la comparación en esos grupos específicos.
+  El IEC se calcula para los **1.037 municipios** con datos disponibles, usando el promedio de todos los años (2011-2024). El **promedio nacional es de 64.63 sobre 100**.
 
-**Tablas creadas**: `silver.municipios_clusterizados`
+  ### ¿Cómo se compara un municipio con su grupo?
 
----
+  Una vez calculado el IEC de cada municipio, se calcula también el **IEC promedio de los municipios sin centro digital dentro del mismo grupo territorial**. La diferencia entre estos dos valores indica si el
+  municipio está por encima o por debajo de lo que cabría esperar para su perfil.
 
-### Hito 6 — Índice de Efectividad de Conectividad (IEC) (Gold)
+  El hallazgo principal: **el 62% de los municipios con Centros Digitales en operación tienen un IEC superior al promedio de municipios similares sin CD**, lo que sugiere una asociación positiva entre los
+  centros digitales y los resultados educativos.
 
-El IEC es el indicador central del proyecto, es un número de 0 a 100 que resume la situación educativa de cada municipio. Se calcula como una suma ponderada de tres componentes normalizados al rango 0-100:
+  ---
 
-```
-IEC = 0.40 × componente_desercion + 0.35 × componente_cobertura + 0.25 × componente_aprobacion
-```
+  ## ¿Cómo funciona el modelo de inteligencia artificial?
 
-- **Componente deserción** (40%): Tasa de deserciónj escolar de cada municipio. El dato se toma invertido.
-    Menor deserción produce un componente más alto
-- **Componente cobertura neta** (35%): Porcentaje de niños entre 5 y 16 años que están matriculados en el grado que corresponde a su edad. 
-    Se toma mayor cobertura que produce un componente más alto
-- **Componente aprobación** (25%): Tasa de aprobación escolar.
-    El mayor tasa de aprobación produce un componente más alto
+  ConectaIA entrena un modelo de **Random Forest**, un algoritmo de aprendizaje automático que aprende patrones a partir de ejemplos reales, para clasificar cada municipio con CD en tres niveles de
+  efectividad: **Alto, Medio o Bajo**.
 
-El IEC se calcula para los 1,037 municipios usando el promedio de todos los años disponibles. Para la comparación, se calculó el promedio del IEC de los municipios sin centro digital dentro de cada cluster (`iec_promedio_cluster_sin_cd`), y la diferencia de cada municipio con centro digital respecto a ese promedio (`diferencia_vs_cluster`).
+  ### ¿Qué aprende el modelo?
 
-El IEC promedio nacional resultó en 64.63 sobre 100. El 62% de los municipios con centro digital tienen un IEC superior al promedio de municipios sin CD de su mismo cluster, lo que sugiere una asociación positiva entre los centros digitales y los resultados educativos.
+  El modelo aprende a predecir el nivel de efectividad a partir de las características del centro digital:
 
-**Tablas creadas**: `gold.municipios_iec`
+  - Inversión total en el centro
+  - Promedio de usuarios activos por mes
+  - Velocidades de conexión (subida y bajada)
+  - Número de sedes en el municipio
+  - Grupo territorial al que pertenece
+  - Si es zona PDET (municipios priorizados por el proceso de paz)
 
----
+  ### ¿Qué factores importan más?
 
-### Hito 7 — Clasificación con Random Forest (Gold)
+  Uno de los resultados más valiosos es entender **qué hace que un CD sea efectivo**. El modelo reveló el peso de cada factor:
 
-Se entrenó un modelo de clasificación Random Forest para dos propósitos: clasificar cada municipio con centro digital en nivel de efectividad Alto, Medio o Bajo, y entender qué características del centro digital predicen esa efectividad.
+  | Factor | Importancia |
+  |---|---|
+  | Usuarios activos mensuales | **34%**, el más importante |
+  | Inversión total | **16%** |
+  | Velocidad de descarga | **12%** |
+  | Velocidad de subida | **12%** |
+  | Número de sedes | **11%** |
+  | Grupo territorial | **3%** |
+  | Zona PDET | **1.3%**, efecto mínimo |
 
-La variable objetivo (`nivel_efectividad`) se definió por terciles de `diferencia_vs_cluster`: el tercio superior de municipios que más superaron a su cluster en IEC se clasificó como Alto, el tercio inferior como Bajo, y el resto como Medio. Las variables predictoras fueron las características del centro digital: inversión total, usuarios activos mensuales, velocidades de conexión (subida y bajada), número de sedes, cluster territorial y si el municipio es zona PDET.
+  La conclusión es clara: **lo que más predice la efectividad no es cuánto se invirtió ni la velocidad del internet, sino cuántas personas realmente usan el centro digital activamente**. Un CD con muchos
+  usuarios tiene mucha más probabilidad de mostrar impacto educativo positivo que uno bien equipado pero poco utilizado.
 
-El modelo alcanzó un 97.71% de accuracy sobre los datos de entrenamiento. Los resultados de importancia de variables revelan que el uso activo del centro digital (`usuarios_activos_prom`) es el factor más determinante de la efectividad (34%), seguido por la inversión total (16%). Las velocidades de conexión y el número de sedes tienen importancia similar entre sí (~12% cada uno). Ser zona PDET tiene un efecto marginal en el modelo (1.3%).
+  ---
 
-El modelo entrenado se serializó como archivo `.pkl` para su uso en el simulador interactivo del dashboard.
+  ## ¿Qué muestra el tablero interactivo?
 
-**Tablas creadas**: `gold.modelo_resultados`
+  El tablero es la cara visible del proyecto. Está diseñado para que cualquier persona pueda explorar los resultados sin necesidad de conocimientos técnicos. Tiene tres módulos principales:
 
----
+  ---
 
-## Estructura del Proyecto
+  ### Módulo 1: Mapa de Municipios
 
-```
-ConectaIA/
-├── docker-compose.yml
-├── docker/
-│   └── elt.Dockerfile
-├── postgres/
-│   └── init/
-│       └── 01_schemas.sql
-├── elt/
-│   ├── requirements.txt
-│   ├── wait-for-it.sh
-│   ├── run_pipeline.py
-│   ├── db/
-│   │   └── connection.py
-│   ├── extract/
-│   │   └── extract.py
-│   └── transform/
-│       ├── utils.py
-│       ├── crosswalk.py
-│       ├── integracion.py
-│       ├── features.py
-│       ├── clustering.py
-│       ├── iec.py
-│       └── random_forest.py
-└── README.md
-```
+  Un mapa interactivo de Colombia donde cada municipio aparece coloreado según su nivel de efectividad:
 
----
+  - **Verde**: IEC alto (75–100), resultados educativos muy buenos
+  - **Amarillo**: IEC medio-alto (60–74), resultados por encima del promedio
+  - **Naranja**: IEC medio-bajo (45–59), resultados por mejorar
+  - **Rojo**: IEC bajo (0–44), situación educativa crítica
 
-## Cómo ejecutar el proyecto
+  **Filtros disponibles**: Se puede filtrar el mapa por región del país, nivel de efectividad, si el municipio es zona PDET, y si tiene o no un centro digital activo.
 
-### Requisitos
-- Docker Desktop instalado y corriendo
+  **Detalle por municipio**: Al hacer clic en cualquier municipio del mapa, aparece una ventana emergente con información detallada: el IEC total, el desglose por componente (deserción, cobertura, aprobación),
+   el nivel de efectividad y la comparación con el promedio de su grupo territorial.
 
-### Pasos
+  **Polígonos geográficos**: El mapa carga los contornos de cada municipio en formato GeoJSON para dibujar sus fronteras con precisión y permitir una visualización territorial correcta.
 
-```bash
-# Clonar el repositorio
-git clone https://github.com/jeriveraa23/conectaia.git
-cd conectaia
+  ---
 
-# Levantar el entorno completo
-docker compose up --build
-```
+  ### Módulo 2: Simulador de Impacto
 
-El pipeline corre automáticamente al levantar los contenedores. Postgres inicializa el esquema y el contenedor ELT extrae, transforma y carga los datos en secuencia. El proceso completo tarda aproximadamente 5 minutos dependiendo de la disponibilidad de la API de datos.gov.co.
+  El simulador permite hacerse una pregunta práctica: **"¿Qué IEC tendría este municipio si cambiamos las condiciones del centro digital?"**
 
----
+  El usuario selecciona un municipio y ajusta los parámetros del centro digital que quiere simular:
 
-## Hallazgos Principales
+  - **Nivel de inversión** (desde $100 millones hasta $750 millones)
+  - **Usuarios activos esperados por mes** (desde 15 hasta 150 usuarios)
+  - **Número de sedes** en el municipio
+  - **Si es zona PDET** o no
 
-- El 62% de los municipios con Centros Digitales en operación tienen un IEC superior al promedio de municipios sin CD de su mismo cluster territorial
-- El factor más determinante de la efectividad del CD es el uso activo (usuarios activos mensuales), no la inversión ni la velocidad de conexión
-- Los Centros Digitales con mayor efectividad tienden a estar en municipios con mayor inversión acumulada y mejores velocidades de conexión
-- Las zonas PDET no muestran un efecto diferencial significativo en el modelo, lo que sugiere que el impacto del CD es relativamente uniforme independientemente de la priorización de política pública
+  Al presionar **Simular**, el modelo de inteligencia artificial calcula el nivel de efectividad predicho y muestra cuatro resultados:
 
----
+  1. **El nivel de efectividad simulado**, Alto, Medio o Bajo, con las probabilidades de cada clasificación.
+  2. **Comparación con el grupo territorial**: El IEC simulado se contrasta con el promedio real de municipios similares, para entender si el resultado estaría por encima o por debajo de lo esperado para ese
+  perfil.
+  3. **Explicación en lenguaje natural generada por IA**: Un texto claro en español que explica por qué el municipio obtuvo ese puntaje, qué significa la diferencia respecto a su grupo, y qué factores están
+  impulsando o limitando el resultado.
+  4. **Mapa simulado**: Un mapa actualizado resalta el municipio seleccionado, mostrando visualmente dónde queda su IEC simulado en el contexto del territorio nacional.
+
+  ---
+
+  ### Módulo 3: Asistente de Preguntas con IA
+
+  Un chatbot integrado en el tablero que permite hacer **hasta 3 preguntas** sobre los datos del proyecto en lenguaje cotidiano, sin necesidad de conocer ningún lenguaje de programación ni bases de datos.
+
+  Ejemplos de preguntas que se pueden hacer:
+  - *"¿Cuáles son los 5 municipios con mayor IEC en la región Caribe?"*
+  - *"¿Cuántos municipios tienen nivel de efectividad Alto en Antioquia?"*
+  - *"¿Qué municipios PDET tienen un IEC por encima del promedio nacional?"*
+
+  El asistente traduce la pregunta a una consulta sobre los datos reales, obtiene los resultados y los devuelve en una respuesta clara en español.
+
+  ---
+
+  ## Tecnología utilizada
+
+  | Componente | Tecnología |
+  |---|---|
+  | **Tablero interactivo** | Streamlit, framework de Python para aplicaciones web de datos |
+  | **Base de datos** | Supabase, base de datos en la nube que almacena todos los datos procesados y los resultados del modelo |
+  | **Mapas** | Folium, librería de mapas interactivos |
+  | **Modelos de IA** | scikit-learn (Random Forest), K-Prototypes (agrupamiento) |
+  | **Asistente de lenguaje** | GPT-3.5 / GPT-4o-mini (OpenAI) para explicaciones y chatbot |
+  | **Pipeline de datos** | Python, pandas |
+  | **Fuente de datos** | API Socrata de datos.gov.co |
+
+  ---
+
+  ## Hallazgos principales
+
+  - El **62%** de los municipios con Centros Digitales en operación tienen mejores resultados educativos que municipios similares sin CD.
+  - El factor que más predice la efectividad de un CD es el **uso activo** (usuarios al mes), no la inversión ni la velocidad de internet.
+  - El **IEC promedio nacional** es de **64.63 sobre 100**.
+  - Ser zona PDET no garantiza mayor efectividad educativa por sí solo; lo que importa es si el centro está siendo realmente utilizado.
+  - Los CDs con mayor inversión y mejores velocidades tienden también a tener más usuarios, lo que crea un círculo virtuoso de impacto.
+
+  ---
+
+  *ConectaIA fue desarrollado como propuesta para la competencia de datos abiertos, usando exclusivamente fuentes oficiales del Gobierno colombiano.*
