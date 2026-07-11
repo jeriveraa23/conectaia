@@ -45,8 +45,10 @@ gold.municipios_iec (grano: municipio) -- tabla principal para preguntas de impa
     codigo_municipio_men TEXT, municipio TEXT, departamento TEXT, region TEXT,
     cluster INTEGER, tiene_centro_digital BOOLEAN,
     componente_desercion NUMERIC, componente_cobertura NUMERIC,
-    componente_aprobacion NUMERIC, iec NUMERIC,
-    iec_promedio_cluster_sin_cd NUMERIC, diferencia_vs_cluster NUMERIC,
+    componente_aprobacion NUMERIC,
+    iec NUMERIC,                        -- IEC = Índice de Efectividad de Conectividad (escala 0-100): mide el impacto educativo del Centro Digital combinando deserción (40%), cobertura (35%) y aprobación (25%)
+    iec_promedio_cluster_sin_cd NUMERIC, -- IEC promedio de municipios similares SIN Centro Digital en el mismo grupo territorial
+    diferencia_vs_cluster NUMERIC,      -- diferencia entre el IEC del municipio y el promedio de su grupo (positivo = mejor que sus pares)
     nivel_efectividad TEXT ('Alto'|'Medio'|'Bajo'), es_pdet BOOLEAN,
     es_outlier BOOLEAN, revisado_manual BOOLEAN
 
@@ -103,6 +105,12 @@ de PostgreSQL, usando EXCLUSIVAMENTE el siguiente esquema:
 
 {ESQUEMA_DESCRIPCION}
 
+Glosario importante:
+- IEC = Índice de Efectividad de Conectividad: puntaje de 0 a 100 que mide el impacto
+  educativo de los Centros Digitales Rurales en un municipio. Se calcula combinando
+  deserción escolar (40%), cobertura neta (35%) y tasa de aprobación (25%).
+  Un IEC más alto significa mejor desempeño educativo.
+
 Reglas:
 - Responde ÚNICAMENTE con la consulta SQL, sin explicación, sin markdown.
 - Solo genera consultas SELECT (nunca INSERT/UPDATE/DELETE/DDL).
@@ -150,7 +158,7 @@ def _procesar_pregunta(client: OpenAI, pregunta: str) -> str:
     if sql.strip().upper() == "NO_DISPONIBLE":
         return (
             "No puedo responder esa pregunta con los datos disponibles del proyecto "
-            "(municipios, IEC, clusters, Centros Digitales)."
+            "(municipios, IEC —Índice de Efectividad de Conectividad—, grupos territoriales, Centros Digitales)."
         )
 
     segura, motivo = _es_query_segura(sql)

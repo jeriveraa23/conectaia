@@ -80,13 +80,19 @@ def explicar_con_openai(municipio, departamento, region, cluster, iec, iec_prome
     client = OpenAI(api_key=api_key)
 
     prompt = f"""
-Eres un analista de datos educativos de Colombia. Explica en 3 párrafos cortos y en lenguaje claro 
-para un alcalde o funcionario público (no técnico) por qué el municipio de {municipio} ({departamento}) 
+Eres un analista de datos educativos de Colombia. Explica en 3 párrafos cortos y en lenguaje claro
+para un alcalde o funcionario público (no técnico) por qué el municipio de {municipio} ({departamento})
 obtuvo un nivel de efectividad "{nivel_predicho}" en el simulador de Centros Digitales Rurales.
+
+Contexto: el IEC (Índice de Efectividad de Conectividad) es un puntaje de 0 a 100 que mide
+el impacto educativo de los Centros Digitales Rurales. Se construye combinando tres indicadores
+educativos: menor deserción escolar (peso 40%), mayor cobertura neta (peso 35%) y mayor tasa de
+aprobación (peso 25%). Un IEC más alto significa que el Centro Digital está teniendo un mejor
+impacto en la educación del municipio.
 
 Datos del municipio:
 - Región: {region}
-- IEC actual: {iec:.1f} sobre 100
+- IEC actual (Índice de Efectividad de Conectividad): {iec:.1f} sobre 100
 - IEC promedio de municipios similares (grupo territorial {cluster}): {iec_promedio_cluster:.1f}
 - Diferencia vs grupo: {diferencia:+.1f} puntos
 - Número de sedes simuladas: {n_sedes}
@@ -94,9 +100,9 @@ Datos del municipio:
 - Usuarios esperados por mes: {usuarios_sel}
 - Zona PDET: {"Sí" if es_pdet else "No"}
 
-En el primer párrafo explica qué significa el nivel "{nivel_predicho}" y cómo se compara el municipio 
-con otros de su grupo territorial. En el segundo párrafo explica qué factores del Centro Digital 
-influyen más en este resultado. En el tercer párrafo da una recomendación práctica para mejorar 
+En el primer párrafo explica qué significa el nivel "{nivel_predicho}" y cómo se compara el municipio
+con otros de su grupo territorial. En el segundo párrafo explica qué factores del Centro Digital
+influyen más en este resultado. En el tercer párrafo da una recomendación práctica para mejorar
 o mantener la efectividad. Sé directo, evita tecnicismos y usa máximo 150 palabras en total.
 """
 
