@@ -41,8 +41,6 @@ services:
       - "8888:8888"
     volumes:
       - ./elt:/app
-      - ./elt/data:/app/data
-      - ./elt/models:/app/models
 
   dashboard:
     build:

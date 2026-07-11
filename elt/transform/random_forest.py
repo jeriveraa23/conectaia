@@ -96,8 +96,8 @@ class RandomForestBuilder:
         self.db.load(importancia, schema="gold", table="modelo_resultados")
 
         # --- Guardar modelo como archivo ---
-        os.makedirs("/elt/models", exist_ok=True)
-        with open("/elt/models/random_forest.pkl", "wb") as f:
+        os.makedirs("/app/models", exist_ok=True)
+        with open("/app/models/random_forest.pkl", "wb") as f:
             pickle.dump(modelo, f)
 
         print(f"\nModelo guardado en /elt/models/random_forest.pkl")
