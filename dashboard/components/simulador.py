@@ -70,7 +70,14 @@ COLORES_NIVEL = {
 
 def explicar_con_openai(municipio, departamento, region, cluster, iec, iec_promedio_cluster,
                          diferencia, nivel_predicho, n_sedes, inversion_sel, usuarios_sel, es_pdet):
-    client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+    api_key = None
+    try:
+        api_key = st.secrets.get("OPENAI_API_KEY")
+    except Exception:
+        pass
+    if not api_key:
+        api_key = os.environ.get("OPENAI_API_KEY")
+    client = OpenAI(api_key=api_key)
 
     prompt = f"""
 Eres un analista de datos educativos de Colombia. Explica en 3 párrafos cortos y en lenguaje claro 
