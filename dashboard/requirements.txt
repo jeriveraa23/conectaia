@@ -4,6 +4,6 @@ sqlalchemy
 psycopg2-binary
 folium
 streamlit-folium
-scikit-learn==1.4.2
+scikit-learn==1.9.0
 openai
 tabulate
