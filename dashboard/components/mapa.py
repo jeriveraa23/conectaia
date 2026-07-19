@@ -277,6 +277,7 @@ def render_mapa():
         mapa,
         use_container_width=True,
         height=650,
+        returned_objects=["last_active_drawing"],
         key="mapa_principal",
     )
 
