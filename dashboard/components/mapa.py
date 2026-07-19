@@ -8,6 +8,7 @@ from db.connection import cargar_iec
 from utils.colores import color_por_iec
 
 
+@st.cache_data(show_spinner=False)
 def cargar_geojson():
     ruta = os.path.join(os.path.dirname(__file__), "..", "data", "municipios.geojson")
     with open(ruta, "r", encoding="utf-8") as f:
@@ -157,7 +158,7 @@ def construir_popup(datos):
 
 
 COLOMBIA_BOUNDS = [[-5.2, -83.0], [14.2, -65.8]]
-COLOR_SIN_DATO = "#8a8a8a"
+COLOR_SIN_DATO = "#a0a0a0"  # mismo gris que utils/colores.py — antes eran dos grises distintos
 COLOR_ATENUADO = "#d9d9d9"
 
 
@@ -254,6 +255,33 @@ def construir_mapa(iec_df, geojson, municipio_seleccionado=None):
     return mapa
 
 
+def _filtrar_iec(iec_df, region_sel, nivel_sel, solo_pdet, solo_cd):
+    df = iec_df.copy()
+    if region_sel != "Todas":
+        df = df[df["region"] == region_sel]
+    if nivel_sel != "Todos":
+        df = df[df["nivel_efectividad"] == nivel_sel]
+    if solo_pdet:
+        df = df[df["es_pdet"] == True]
+    if solo_cd:
+        df = df[df["tiene_centro_digital"] == True]
+    return df
+
+
+@st.cache_resource(show_spinner="Cargando mapa...")
+def _construir_mapa_cacheado(_iec_df_full, region_sel, nivel_sel, solo_pdet, solo_cd, municipio_sel):
+    """Reconstruye el mapa (las ~1,122 geometrías con sus popups) SOLO cuando
+    cambia alguno de los filtros. El prefijo "_" en _iec_df_full le dice a
+    Streamlit que no intente hashear el DataFrame completo (sería lento);
+    la clave de caché son únicamente los filtros, que son pocos y baratos
+    de comparar. Un clic en el mapa o abrir el panel de análisis con IA no
+    cambia estos filtros, así que en esos casos el mapa sale de caché al
+    instante en vez de reconstruirse."""
+    geojson = cargar_geojson()
+    df_filtrado = _filtrar_iec(_iec_df_full, region_sel, nivel_sel, solo_pdet, solo_cd)
+    return construir_mapa(df_filtrado, geojson, municipio_seleccionado=municipio_sel)
+
+
 def render_mapa():
     st.markdown(
         "Este mapa muestra el **IEC (Índice de Efectividad de Conectividad)** de cada "
@@ -264,9 +292,9 @@ def render_mapa():
 
     if st.button("🔄 Recargar datos"):
         st.cache_data.clear()
+        st.cache_resource.clear()
 
-    iec_df  = cargar_iec()
-    geojson = cargar_geojson()
+    iec_df = cargar_iec()
 
     with st.expander("⚙️ Filtros", expanded=True):
         col1, col2, col3, col4 = st.columns(4)
@@ -282,23 +310,31 @@ def render_mapa():
             municipios_lista = ["Todos"] + sorted(iec_df["municipio"].dropna().unique().tolist())
             municipio_sel = st.selectbox("Municipio", municipios_lista)
 
-    st.markdown("**Leyenda (IEC)**: 🟢 75-100 · 🟡 60-74 · 🟠 45-59 · 🔴 0-44 · ⬛ Sin dato")
+    _leyenda_iec = [
+        ("#1a9641", "75-100"),
+        ("#ffd966", "60-74"),
+        ("#fdae61", "45-59"),
+        ("#d7191c", "0-44"),
+        (COLOR_SIN_DATO, "Sin dato"),
+    ]
+    _swatches = "".join(
+        f'<span style="display:inline-flex; align-items:center; margin-right:14px;">'
+        f'<span style="width:12px; height:12px; background:{color}; border-radius:3px; '
+        f'display:inline-block; margin-right:5px;"></span>'
+        f'<span style="font-size:13px; color:#444;">{etiqueta}</span></span>'
+        for color, etiqueta in _leyenda_iec
+    )
+    st.markdown(
+        f'<div style="margin-bottom:6px;"><b style="font-size:13px;">Leyenda (IEC):</b> {_swatches}</div>',
+        unsafe_allow_html=True,
+    )
     if municipio_sel != "Todos":
         st.caption(f"🔎 Resaltando **{municipio_sel}** — el resto del mapa se muestra atenuado.")
 
-    df_filtrado = iec_df.copy()
-    if region_sel != "Todas":
-        df_filtrado = df_filtrado[df_filtrado["region"] == region_sel]
-    if nivel_sel != "Todos":
-        df_filtrado = df_filtrado[df_filtrado["nivel_efectividad"] == nivel_sel]
-    if solo_pdet:
-        df_filtrado = df_filtrado[df_filtrado["es_pdet"] == True]
-    if solo_cd:
-        df_filtrado = df_filtrado[df_filtrado["tiene_centro_digital"] == True]
-
+    df_filtrado = _filtrar_iec(iec_df, region_sel, nivel_sel, solo_pdet, solo_cd)
     st.markdown(f"**{len(df_filtrado)} municipios** seleccionados")
 
-    mapa = construir_mapa(df_filtrado, geojson, municipio_seleccionado=municipio_sel)
+    mapa = _construir_mapa_cacheado(iec_df, region_sel, nivel_sel, solo_pdet, solo_cd, municipio_sel)
 
     # OJO: ya NO pasamos returned_objects=[]; necesitamos que st_folium
     # devuelva el municipio sobre el que el usuario hizo clic.
