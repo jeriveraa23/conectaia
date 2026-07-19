@@ -162,7 +162,7 @@ COLOR_SIN_DATO = "#a0a0a0"  # mismo gris que utils/colores.py — antes eran dos
 COLOR_ATENUADO = "#d9d9d9"
 
 
-def construir_mapa(iec_df, geojson, municipio_seleccionado=None):
+def construir_mapa(iec_df, geojson, codigo_seleccionado=None):
     mapa = folium.Map(
         location=[4.5, -74.0],
         zoom_start=5,
@@ -176,8 +176,7 @@ def construir_mapa(iec_df, geojson, municipio_seleccionado=None):
 
     iec_dict = iec_df.set_index("codigo_municipio_men").to_dict("index")
 
-    hay_seleccion = bool(municipio_seleccionado) and municipio_seleccionado != "Todos"
-    nombre_sel_norm = municipio_seleccionado.strip().upper() if hay_seleccion else None
+    hay_seleccion = bool(codigo_seleccionado)
 
     def color_de(datos):
         if datos is None:
@@ -187,7 +186,6 @@ def construir_mapa(iec_df, geojson, municipio_seleccionado=None):
     def style_function(feature):
         codigo = feature["properties"].get("MPIO_CCNCT")
         datos = iec_dict.get(codigo)
-        nombre = feature["properties"].get("MPIO_CNMBR", "")
 
         if not hay_seleccion:
             return {
@@ -197,7 +195,7 @@ def construir_mapa(iec_df, geojson, municipio_seleccionado=None):
                 "weight": 0.6,
             }
 
-        if nombre.strip().upper() == nombre_sel_norm:
+        if codigo == codigo_seleccionado:
             # Municipio seleccionado: resaltado con su color real de IEC y borde grueso
             return {
                 "fillColor": color_de(datos),
@@ -269,7 +267,7 @@ def _filtrar_iec(iec_df, region_sel, nivel_sel, solo_pdet, solo_cd):
 
 
 @st.cache_resource(show_spinner="Cargando mapa...")
-def _construir_mapa_cacheado(_iec_df_full, region_sel, nivel_sel, solo_pdet, solo_cd, municipio_sel):
+def _construir_mapa_cacheado(_iec_df_full, region_sel, nivel_sel, solo_pdet, solo_cd, codigo_sel):
     """Reconstruye el mapa (las ~1,122 geometrías con sus popups) SOLO cuando
     cambia alguno de los filtros. El prefijo "_" en _iec_df_full le dice a
     Streamlit que no intente hashear el DataFrame completo (sería lento);
@@ -279,7 +277,7 @@ def _construir_mapa_cacheado(_iec_df_full, region_sel, nivel_sel, solo_pdet, sol
     instante en vez de reconstruirse."""
     geojson = cargar_geojson()
     df_filtrado = _filtrar_iec(_iec_df_full, region_sel, nivel_sel, solo_pdet, solo_cd)
-    return construir_mapa(df_filtrado, geojson, municipio_seleccionado=municipio_sel)
+    return construir_mapa(df_filtrado, geojson, codigo_seleccionado=codigo_sel)
 
 
 def render_mapa():
@@ -307,12 +305,21 @@ def render_mapa():
             solo_pdet  = st.checkbox("Solo PDET")
             solo_cd    = st.checkbox("Solo con CD activo")
         with col4:
-            municipios_lista = ["Todos"] + sorted(iec_df["municipio"].dropna().unique().tolist())
-            municipio_sel = st.selectbox("Municipio", municipios_lista)
+            municipios_tabla = (
+                iec_df[["municipio", "codigo_municipio_men"]]
+                .dropna()
+                .drop_duplicates()
+                .sort_values("municipio")
+            )
+            municipio_sel = st.selectbox("Municipio", ["Todos"] + municipios_tabla["municipio"].tolist())
+            codigo_sel = None
+            if municipio_sel != "Todos":
+                coincidencias = municipios_tabla.loc[municipios_tabla["municipio"] == municipio_sel, "codigo_municipio_men"]
+                codigo_sel = coincidencias.iloc[0] if not coincidencias.empty else None
 
     _leyenda_iec = [
         ("#1a9641", "75-100"),
-        ("#ffd966", "60-74"),
+        ("#a6d96a", "60-74"),
         ("#fdae61", "45-59"),
         ("#d7191c", "0-44"),
         (COLOR_SIN_DATO, "Sin dato"),
@@ -334,7 +341,7 @@ def render_mapa():
     df_filtrado = _filtrar_iec(iec_df, region_sel, nivel_sel, solo_pdet, solo_cd)
     st.markdown(f"**{len(df_filtrado)} municipios** seleccionados")
 
-    mapa = _construir_mapa_cacheado(iec_df, region_sel, nivel_sel, solo_pdet, solo_cd, municipio_sel)
+    mapa = _construir_mapa_cacheado(iec_df, region_sel, nivel_sel, solo_pdet, solo_cd, codigo_sel)
 
     # OJO: ya NO pasamos returned_objects=[]; necesitamos que st_folium
     # devuelva el municipio sobre el que el usuario hizo clic.
