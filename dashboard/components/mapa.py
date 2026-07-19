@@ -158,9 +158,10 @@ def construir_popup(datos):
 
 COLOMBIA_BOUNDS = [[-5.2, -83.0], [14.2, -65.8]]
 COLOR_SIN_DATO = "#8a8a8a"
+COLOR_ATENUADO = "#d9d9d9"
 
 
-def construir_mapa(iec_df, geojson):
+def construir_mapa(iec_df, geojson, municipio_seleccionado=None):
     mapa = folium.Map(
         location=[4.5, -74.0],
         zoom_start=5,
@@ -174,6 +175,9 @@ def construir_mapa(iec_df, geojson):
 
     iec_dict = iec_df.set_index("codigo_municipio_men").to_dict("index")
 
+    hay_seleccion = bool(municipio_seleccionado) and municipio_seleccionado != "Todos"
+    nombre_sel_norm = municipio_seleccionado.strip().upper() if hay_seleccion else None
+
     def color_de(datos):
         if datos is None:
             return COLOR_SIN_DATO
@@ -182,11 +186,31 @@ def construir_mapa(iec_df, geojson):
     def style_function(feature):
         codigo = feature["properties"].get("MPIO_CCNCT")
         datos = iec_dict.get(codigo)
+        nombre = feature["properties"].get("MPIO_CNMBR", "")
+
+        if not hay_seleccion:
+            return {
+                "fillColor": color_de(datos),
+                "fillOpacity": 0.75,
+                "color": "#ffffff",
+                "weight": 0.6,
+            }
+
+        if nombre.strip().upper() == nombre_sel_norm:
+            # Municipio seleccionado: resaltado con su color real de IEC y borde grueso
+            return {
+                "fillColor": color_de(datos),
+                "fillOpacity": 0.9,
+                "color": "#222222",
+                "weight": 3,
+            }
+
+        # Resto del mapa: atenuado mientras hay una selección activa
         return {
-            "fillColor": color_de(datos),
-            "fillOpacity": 0.75,
+            "fillColor": COLOR_ATENUADO,
+            "fillOpacity": 0.35,
             "color": "#ffffff",
-            "weight": 0.6,
+            "weight": 0.4,
         }
 
     def highlight_function(feature):
@@ -245,7 +269,7 @@ def render_mapa():
     geojson = cargar_geojson()
 
     with st.expander("⚙️ Filtros", expanded=True):
-        col1, col2, col3 = st.columns(3)
+        col1, col2, col3, col4 = st.columns(4)
         with col1:
             regiones   = ["Todas"] + sorted(iec_df["region"].dropna().unique().tolist())
             region_sel = st.selectbox("Región", regiones)
@@ -254,8 +278,13 @@ def render_mapa():
         with col3:
             solo_pdet  = st.checkbox("Solo PDET")
             solo_cd    = st.checkbox("Solo con CD activo")
+        with col4:
+            municipios_lista = ["Todos"] + sorted(iec_df["municipio"].dropna().unique().tolist())
+            municipio_sel = st.selectbox("Municipio", municipios_lista)
 
     st.markdown("**Leyenda (IEC)**: 🟢 75-100 · 🟡 60-74 · 🟠 45-59 · 🔴 0-44 · ⬛ Sin dato")
+    if municipio_sel != "Todos":
+        st.caption(f"🔎 Resaltando **{municipio_sel}** — el resto del mapa se muestra atenuado.")
 
     df_filtrado = iec_df.copy()
     if region_sel != "Todas":
@@ -269,7 +298,7 @@ def render_mapa():
 
     st.markdown(f"**{len(df_filtrado)} municipios** seleccionados")
 
-    mapa = construir_mapa(df_filtrado, geojson)
+    mapa = construir_mapa(df_filtrado, geojson, municipio_seleccionado=municipio_sel)
 
     # OJO: ya NO pasamos returned_objects=[]; necesitamos que st_folium
     # devuelva el municipio sobre el que el usuario hizo clic.
