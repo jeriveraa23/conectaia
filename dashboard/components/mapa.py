@@ -1,10 +1,11 @@
+import os
 import json
 import folium
 import streamlit as st
 from streamlit_folium import st_folium
+from openai import OpenAI
 from db.connection import cargar_iec
 from utils.colores import color_por_iec
-import os
 
 
 def cargar_geojson():
@@ -32,17 +33,75 @@ GLOSARIO = [
 ]
 
 
+def _cliente_openai():
+    """Busca la API key en st.secrets (Streamlit Cloud) o en variables de entorno (.env local)."""
+    api_key = None
+    try:
+        api_key = st.secrets.get("OPENAI_API_KEY")
+    except Exception:
+        pass
+    if not api_key:
+        api_key = os.environ.get("OPENAI_API_KEY")
+    if not api_key:
+        return None
+    return OpenAI(api_key=api_key)
+
+
+def analizar_municipio_con_ia(datos):
+    """Genera un análisis en lenguaje natural del municipio, con el mismo
+    estilo del simulador (3 párrafos, para funcionario público no técnico)."""
+    client = _cliente_openai()
+    if client is None:
+        return "⚠️ Falta configurar OPENAI_API_KEY para generar el análisis."
+
+    iec = datos.get("iec", 0)
+    nivel = datos.get("nivel_efectividad", "N/A")
+    diferencia = datos.get("diferencia_vs_cluster", 0)
+    tiene_cd = datos.get("tiene_centro_digital", False)
+
+    prompt = f"""
+Eres un analista de datos educativos de Colombia. Explica en 3 párrafos cortos y en lenguaje claro
+para un alcalde o funcionario público (no técnico) la situación del municipio de {datos.get('municipio', 'N/A')}
+({datos.get('departamento', '')}) en cuanto al impacto de los Centros Digitales Rurales en la educación.
+
+Contexto: el IEC (Índice de Efectividad de Conectividad) es un puntaje de 0 a 100 que mide
+el impacto educativo de los Centros Digitales Rurales. Se construye combinando tres indicadores
+educativos: menor deserción escolar (peso 40%), mayor cobertura neta (peso 35%) y mayor tasa de
+aprobación (peso 25%). Un IEC más alto significa un mejor impacto educativo.
+
+Datos del municipio:
+- Región: {datos.get('region', 'N/A')}
+- IEC actual (Índice de Efectividad de Conectividad): {iec:.1f} sobre 100
+- Nivel de efectividad vs municipios similares: {nivel}
+- Diferencia vs su grupo territorial: {diferencia:+.1f} puntos
+- Retención estudiantil: {datos.get('componente_desercion', 0):.1f}/100
+- Cobertura escolar: {datos.get('componente_cobertura', 0):.1f}/100
+- Tasa de aprobación: {datos.get('componente_aprobacion', 0):.1f}/100
+- {'Tiene Centro Digital activo' if tiene_cd else 'No tiene Centro Digital'}
+- {'Es zona PDET' if datos.get('es_pdet') else 'No es zona PDET'}
+
+En el primer párrafo explica cómo está el municipio en términos de IEC y qué significa su nivel
+de efectividad "{nivel}" comparado con municipios similares. En el segundo párrafo analiza sus tres
+componentes (retención, cobertura, aprobación) e identifica cuál es su punto más fuerte y cuál el
+más débil. En el tercer párrafo da una recomendación práctica. Sé directo, evita tecnicismos y usa
+máximo 160 palabras en total.
+"""
+
+    response = client.chat.completions.create(
+        model="gpt-3.5-turbo",
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=320,
+        temperature=0.7,
+    )
+    return response.choices[0].message.content
+
+
 def construir_popup(datos):
     iec = datos.get('iec', 0)
     nivel = datos.get('nivel_efectividad', 'N/A')
     diferencia = datos.get('diferencia_vs_cluster', 0)
 
-    # El color principal de la tarjeta lo determina el IEC (KPI principal),
-    # con los mismos umbrales fijos que el resto del dashboard.
     color_iec = color_por_iec(iec)
-    # La efectividad relativa a municipios similares es información
-    # secundaria: se muestra, pero con un color propio y discreto que NO
-    # afecta el color general de la tarjeta.
     color_nivel_secundario = {"Alto": "#1a9641", "Medio": "#e08e00", "Bajo": "#d7191c"}.get(nivel, "#888")
     signo = "+" if diferencia > 0 else ""
 
@@ -90,17 +149,14 @@ def construir_popup(datos):
                 {'✅ Centro Digital activo' if datos.get('tiene_centro_digital') else '❌ Sin Centro Digital'}
                 {'· 🏔️ Zona PDET' if datos.get('es_pdet') else ''}
             </p>
+            <p style="margin:8px 0 0 0; font-size:11px; color:#2b6cb0; font-style:italic;">
+                👉 Cierra este cuadro y usa el botón de análisis con IA debajo del mapa.
+            </p>
         </div>
     """
 
 
-# Bounding box real de Colombia (calculado a partir de data/municipios.geojson),
-# con un pequeño margen. Se usa para que el mapa arranque centrado en el país
-# y no se pueda alejar hasta ver el mundo completo.
-COLOMBIA_BOUNDS = [[-5.2, -83.0], [14.2, -65.8]]  # [[sur, oeste], [norte, este]]
-
-# Gris más oscuro para municipios sin dato de IEC (antes casi invisible sobre
-# el fondo claro del mapa base).
+COLOMBIA_BOUNDS = [[-5.2, -83.0], [14.2, -65.8]]
 COLOR_SIN_DATO = "#8a8a8a"
 
 
@@ -113,15 +169,12 @@ def construir_mapa(iec_df, geojson):
         max_bounds=True,
     )
     mapa.fit_bounds(COLOMBIA_BOUNDS)
-    # Evita que el usuario arrastre el mapa muy lejos de Colombia.
     mapa.options["maxBounds"] = COLOMBIA_BOUNDS
     mapa.options["maxBoundsViscosity"] = 1.0
 
     iec_dict = iec_df.set_index("codigo_municipio_men").to_dict("index")
 
     def color_de(datos):
-        """Usa umbrales FIJOS (los mismos de la leyenda y las tarjetas),
-        nunca cuantiles relativos al conjunto filtrado."""
         if datos is None:
             return COLOR_SIN_DATO
         return color_por_iec(datos.get("iec"))
@@ -152,7 +205,6 @@ def construir_mapa(iec_df, geojson):
     for feature in geojson["features"]:
         codigo = feature["properties"].get("MPIO_CCNCT")
         datos = iec_dict.get(codigo)
-        # Nombre visible en el tooltip, sin importar si tiene datos o no.
         feature["properties"]["_nombre_tooltip"] = feature["properties"].get("MPIO_CNMBR", "Desconocido")
 
         if datos:
@@ -219,15 +271,17 @@ def render_mapa():
 
     mapa = construir_mapa(df_filtrado, geojson)
 
-    contenedor = st.container()
-    with contenedor:
-        st_folium(
-            mapa,
-            use_container_width=True,
-            height=650,
-            returned_objects=[],
-            key="mapa_principal"
-        )
+    # OJO: ya NO pasamos returned_objects=[]; necesitamos que st_folium
+    # devuelva el municipio sobre el que el usuario hizo clic.
+    salida = st_folium(
+        mapa,
+        use_container_width=True,
+        height=650,
+        key="mapa_principal",
+    )
+
+    # --- Panel de análisis con IA del municipio seleccionado -----------
+    _render_panel_analisis(salida, iec_df)
 
     # --- Glosario -------------------------------------------------------
     st.divider()
@@ -235,3 +289,62 @@ def render_mapa():
     for termino, definicion in GLOSARIO:
         with st.expander(termino):
             st.markdown(definicion)
+
+
+def _municipio_desde_click(salida, iec_df):
+    """A partir de la salida de st_folium intenta identificar el municipio
+    clickeado. Folium no nos da el código directamente, así que ubicamos el
+    municipio cuyo polígono contiene el punto donde se hizo clic usando el
+    nombre del tooltip activo, con respaldo en las coordenadas."""
+    if not salida:
+        return None
+
+    # 1) Vía tooltip / objeto activo (nombre del municipio)
+    nombre = None
+    obj = salida.get("last_active_drawing") or salida.get("last_object_clicked_tooltip")
+    if isinstance(obj, dict):
+        props = obj.get("properties", {})
+        nombre = props.get("_nombre_tooltip") or props.get("MPIO_CNMBR")
+    elif isinstance(obj, str):
+        nombre = obj
+
+    if nombre:
+        coincidencias = iec_df[iec_df["municipio"].str.upper() == str(nombre).upper()]
+        if not coincidencias.empty:
+            return coincidencias.iloc[0].to_dict()
+
+    return None
+
+
+def _render_panel_analisis(salida, iec_df):
+    st.divider()
+    st.markdown("### 🤖 Análisis del municipio con IA")
+
+    datos = _municipio_desde_click(salida, iec_df)
+
+    if datos is None:
+        st.info(
+            "Haz clic en un municipio del mapa para seleccionarlo y luego genera "
+            "un análisis detallado con inteligencia artificial."
+        )
+        return
+
+    # Guardamos el municipio seleccionado en la sesión para que el análisis
+    # persista aunque Streamlit se recargue.
+    st.markdown(
+        f"Municipio seleccionado: **{datos.get('municipio')}** "
+        f"({datos.get('departamento')}) · IEC {datos.get('iec', 0):.1f}"
+    )
+
+    if st.button("✨ Generar análisis del municipio", use_container_width=True, key="btn_analisis_municipio"):
+        with st.spinner("Generando análisis con IA..."):
+            analisis = analizar_municipio_con_ia(datos)
+        st.session_state["analisis_municipio"] = {
+            "codigo": datos.get("codigo_municipio_men"),
+            "texto": analisis,
+        }
+
+    # Mostrar el último análisis generado, si corresponde a este municipio.
+    guardado = st.session_state.get("analisis_municipio")
+    if guardado and guardado.get("codigo") == datos.get("codigo_municipio_men"):
+        st.markdown(guardado["texto"])
