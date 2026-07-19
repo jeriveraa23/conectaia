@@ -158,7 +158,7 @@ def construir_popup(datos):
 
 
 COLOMBIA_BOUNDS = [[-5.2, -83.0], [14.2, -65.8]]
-COLOR_SIN_DATO = "#8a8a8a"
+COLOR_SIN_DATO = "#a0a0a0"  # mismo gris que utils/colores.py — antes eran dos grises distintos
 COLOR_ATENUADO = "#d9d9d9"
 
 
@@ -310,7 +310,24 @@ def render_mapa():
             municipios_lista = ["Todos"] + sorted(iec_df["municipio"].dropna().unique().tolist())
             municipio_sel = st.selectbox("Municipio", municipios_lista)
 
-    st.markdown("**Leyenda (IEC)**: 🟢 75-100 · 🟡 60-74 · 🟠 45-59 · 🔴 0-44 · ⬛ Sin dato")
+    _leyenda_iec = [
+        ("#1a9641", "75-100"),
+        ("#ffd966", "60-74"),
+        ("#fdae61", "45-59"),
+        ("#d7191c", "0-44"),
+        (COLOR_SIN_DATO, "Sin dato"),
+    ]
+    _swatches = "".join(
+        f'<span style="display:inline-flex; align-items:center; margin-right:14px;">'
+        f'<span style="width:12px; height:12px; background:{color}; border-radius:3px; '
+        f'display:inline-block; margin-right:5px;"></span>'
+        f'<span style="font-size:13px; color:#444;">{etiqueta}</span></span>'
+        for color, etiqueta in _leyenda_iec
+    )
+    st.markdown(
+        f'<div style="margin-bottom:6px;"><b style="font-size:13px;">Leyenda (IEC):</b> {_swatches}</div>',
+        unsafe_allow_html=True,
+    )
     if municipio_sel != "Todos":
         st.caption(f"🔎 Resaltando **{municipio_sel}** — el resto del mapa se muestra atenuado.")
 
