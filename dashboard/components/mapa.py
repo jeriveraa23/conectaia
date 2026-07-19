@@ -384,22 +384,27 @@ def render_mapa():
 
 
 def _municipio_desde_click(salida, iec_df):
-    """A partir de la salida de st_folium intenta identificar el municipio
-    clickeado. Folium no nos da el código directamente, así que ubicamos el
-    municipio cuyo polígono contiene el punto donde se hizo clic usando el
-    nombre del tooltip activo, con respaldo en las coordenadas."""
+    """A partir de la salida de st_folium identifica el municipio clickeado,
+    usando el código de municipio (único) en vez del nombre — dos municipios
+    distintos pueden llamarse igual en departamentos diferentes, así que
+    comparar por nombre puede traer el municipio equivocado."""
     if not salida:
         return None
 
-    # 1) Vía tooltip / objeto activo (nombre del municipio)
-    nombre = None
     obj = salida.get("last_active_drawing") or salida.get("last_object_clicked_tooltip")
-    if isinstance(obj, dict):
-        props = obj.get("properties", {})
-        nombre = props.get("_nombre_tooltip") or props.get("MPIO_CNMBR")
-    elif isinstance(obj, str):
-        nombre = obj
+    props = obj.get("properties", {}) if isinstance(obj, dict) else {}
 
+    # 1) Vía código de municipio (confiable, único)
+    codigo = props.get("MPIO_CCNCT")
+    if codigo:
+        coincidencias = iec_df[iec_df["codigo_municipio_men"] == codigo]
+        if not coincidencias.empty:
+            return coincidencias.iloc[0].to_dict()
+
+    # 2) Respaldo por nombre, solo si por algún motivo no vino el código
+    nombre = props.get("_nombre_tooltip") or props.get("MPIO_CNMBR")
+    if not nombre and isinstance(obj, str):
+        nombre = obj
     if nombre:
         coincidencias = iec_df[iec_df["municipio"].str.upper() == str(nombre).upper()]
         if not coincidencias.empty:
