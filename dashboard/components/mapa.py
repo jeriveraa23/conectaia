@@ -12,12 +12,7 @@ from utils.colores import color_por_iec
 def cargar_geojson():
     ruta = os.path.join(os.path.dirname(__file__), "..", "data", "municipios.geojson")
     with open(ruta, "r", encoding="utf-8") as f:
-        geojson = json.load(f)
-    # Se precalcula una sola vez (queda cacheado) en vez de hacerlo en cada
-    # render dentro del loop de construir_mapa.
-    for feature in geojson["features"]:
-        feature["properties"]["_nombre_tooltip"] = feature["properties"].get("MPIO_CNMBR", "Desconocido")
-    return geojson
+        return json.load(f)
 
 
 GLOSARIO = [
@@ -105,26 +100,58 @@ máximo 160 palabras en total.
 def construir_popup(datos):
     iec = datos.get('iec', 0)
     nivel = datos.get('nivel_efectividad', 'N/A')
+    diferencia = datos.get('diferencia_vs_cluster', 0)
+
     color_iec = color_por_iec(iec)
     color_nivel_secundario = {"Alto": "#1a9641", "Medio": "#e08e00", "Bajo": "#d7191c"}.get(nivel, "#888")
+    signo = "+" if diferencia > 0 else ""
 
-    # Popup liviano a propósito: solo lo esencial para identificar el
-    # municipio de un vistazo. El detalle completo (componentes, diferencia
-    # vs. cluster, badges de CD/PDET) se muestra en el panel de abajo al
-    # hacer clic — ahí es mucho más barato de renderizar (una sola vez)
-    # que repetir una tabla HTML completa en los 1,123 popups del mapa.
     return f"""
-        <div style="font-family: Arial; min-width:170px; max-width:210px;">
-            <b style="font-size:14px; color:#222;">{datos.get('municipio', 'N/A')}</b><br>
-            <span style="font-size:11px; color:#888;">{datos.get('departamento', '')}</span>
-            <div style="margin-top:6px;">
-                <span style="font-size:22px; font-weight:700; color:{color_iec};">{round(iec, 1)}</span>
-                <span style="font-size:11px; color:#888;"> IEC</span>
-                &nbsp;·&nbsp;
-                <span style="font-size:12px; color:{color_nivel_secundario}; font-weight:600;">{nivel}</span>
+        <div style="font-family: Arial; min-width: 220px; max-width: 280px;">
+            <h4 style="margin:0 0 2px 0; color:#222;">{datos.get('municipio', 'N/A')}</h4>
+            <p style="margin:0 0 8px 0; color:#888; font-size:12px;">
+                {datos.get('departamento', '')} · {datos.get('region', '')}
+            </p>
+
+            <div style="
+                background:{color_iec}22;
+                border-left: 4px solid {color_iec};
+                padding: 8px 10px;
+                border-radius: 4px;
+                margin-bottom: 8px;
+            ">
+                <span style="font-size:11px; color:#666;">IEC (Índice de Efectividad de Conectividad)</span><br>
+                <span style="font-size:26px; font-weight:700; color:{color_iec};">{round(iec, 1)}</span>
+                <span style="font-size:13px; color:#888;"> / 100</span>
             </div>
-            <p style="margin:6px 0 0 0; font-size:10px; color:#2b6cb0; font-style:italic;">
-                👉 Detalle completo y análisis con IA debajo del mapa.
+
+            <p style="margin:0 0 8px 0; font-size:12px; color:#666;">
+                Efectividad <b style="color:{color_nivel_secundario};">{nivel}</b> vs. municipios similares
+                ({signo}{round(diferencia, 1)} pts)
+            </p>
+
+            <table style="width:100%; font-size:12px; border-collapse:collapse;">
+                <tr>
+                    <td style="padding:3px 0; color:#555;">Retención estudiantil</td>
+                    <td style="text-align:right;"><b>{round(datos.get('componente_desercion', 0), 1)}</b>/100</td>
+                </tr>
+                <tr>
+                    <td style="padding:3px 0; color:#555;">Cobertura escolar</td>
+                    <td style="text-align:right;"><b>{round(datos.get('componente_cobertura', 0), 1)}</b>/100</td>
+                </tr>
+                <tr>
+                    <td style="padding:3px 0; color:#555;">Tasa de aprobación</td>
+                    <td style="text-align:right;"><b>{round(datos.get('componente_aprobacion', 0), 1)}</b>/100</td>
+                </tr>
+            </table>
+
+            <hr style="margin:8px 0; border-color:#eee;">
+            <p style="margin:0; font-size:11px; color:#666;">
+                {'✅ Centro Digital activo' if datos.get('tiene_centro_digital') else '❌ Sin Centro Digital'}
+                {'· 🏔️ Zona PDET' if datos.get('es_pdet') else ''}
+            </p>
+            <p style="margin:8px 0 0 0; font-size:11px; color:#2b6cb0; font-style:italic;">
+                👉 Cierra este cuadro y usa el botón de análisis con IA debajo del mapa.
             </p>
         </div>
     """
@@ -212,6 +239,7 @@ def construir_mapa(iec_df, geojson, codigo_seleccionado=None, popups_html=None):
     for feature in geojson["features"]:
         codigo = feature["properties"].get("MPIO_CCNCT")
         datos = iec_dict.get(codigo)
+        feature["properties"]["_nombre_tooltip"] = feature["properties"].get("MPIO_CNMBR", "Desconocido")
 
         if datos:
             popup_html = (popups_html or {}).get(codigo) or construir_popup(datos)
@@ -395,24 +423,9 @@ def _render_panel_analisis(salida, iec_df):
 
     # Guardamos el municipio seleccionado en la sesión para que el análisis
     # persista aunque Streamlit se recargue.
-    diferencia = datos.get('diferencia_vs_cluster', 0)
-    signo = "+" if diferencia > 0 else ""
-    nivel = datos.get('nivel_efectividad', 'N/A')
-
     st.markdown(
         f"Municipio seleccionado: **{datos.get('municipio')}** "
-        f"({datos.get('departamento')}) · IEC {datos.get('iec', 0):.1f} · "
-        f"Efectividad **{nivel}** vs. municipios similares ({signo}{round(diferencia, 1)} pts)"
-    )
-
-    col_a, col_b, col_c = st.columns(3)
-    col_a.metric("Retención estudiantil", f"{round(datos.get('componente_desercion', 0), 1)}/100")
-    col_b.metric("Cobertura escolar", f"{round(datos.get('componente_cobertura', 0), 1)}/100")
-    col_c.metric("Tasa de aprobación", f"{round(datos.get('componente_aprobacion', 0), 1)}/100")
-
-    st.caption(
-        f"{'✅ Centro Digital activo' if datos.get('tiene_centro_digital') else '❌ Sin Centro Digital'}"
-        f"{' · 🏔️ Zona PDET' if datos.get('es_pdet') else ''}"
+        f"({datos.get('departamento')}) · IEC {datos.get('iec', 0):.1f}"
     )
 
     if st.button("✨ Generar análisis del municipio", use_container_width=True, key="btn_analisis_municipio"):
