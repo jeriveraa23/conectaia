@@ -162,7 +162,18 @@ COLOR_SIN_DATO = "#a0a0a0"  # mismo gris que utils/colores.py — antes eran dos
 COLOR_ATENUADO = "#d9d9d9"
 
 
-def construir_mapa(iec_df, geojson, codigo_seleccionado=None):
+@st.cache_data(show_spinner=False)
+def _popups_por_codigo(_iec_df_full):
+    """Genera una sola vez el HTML de cada popup y lo cachea, indexado por
+    código de municipio. A diferencia de un folium.Map, un string es
+    inmutable y seguro de cachear/reutilizar entre reruns."""
+    popups = {}
+    for _, fila in _iec_df_full.iterrows():
+        popups[fila["codigo_municipio_men"]] = construir_popup(fila.to_dict())
+    return popups
+
+
+def construir_mapa(iec_df, geojson, codigo_seleccionado=None, popups_html=None):
     mapa = folium.Map(
         location=[4.5, -74.0],
         zoom_start=5,
@@ -231,7 +242,7 @@ def construir_mapa(iec_df, geojson, codigo_seleccionado=None):
         feature["properties"]["_nombre_tooltip"] = feature["properties"].get("MPIO_CNMBR", "Desconocido")
 
         if datos:
-            popup_html = construir_popup(datos)
+            popup_html = (popups_html or {}).get(codigo) or construir_popup(datos)
             popup = folium.Popup(popup_html, max_width=300)
         else:
             nombre = feature["properties"].get("MPIO_CNMBR", "Desconocido")
@@ -266,18 +277,17 @@ def _filtrar_iec(iec_df, region_sel, nivel_sel, solo_pdet, solo_cd):
     return df
 
 
-@st.cache_resource(show_spinner="Cargando mapa...")
-def _construir_mapa_cacheado(_iec_df_full, region_sel, nivel_sel, solo_pdet, solo_cd, codigo_sel):
-    """Reconstruye el mapa (las ~1,122 geometrías con sus popups) SOLO cuando
-    cambia alguno de los filtros. El prefijo "_" en _iec_df_full le dice a
-    Streamlit que no intente hashear el DataFrame completo (sería lento);
-    la clave de caché son únicamente los filtros, que son pocos y baratos
-    de comparar. Un clic en el mapa o abrir el panel de análisis con IA no
-    cambia estos filtros, así que en esos casos el mapa sale de caché al
-    instante en vez de reconstruirse."""
+def _construir_mapa_con_filtros(iec_df_full, region_sel, nivel_sel, solo_pdet, solo_cd, codigo_sel):
+    """Arma un folium.Map NUEVO en cada llamada (los objetos Map no se pueden
+    cachear/reutilizar: se mutan internamente cada vez que st_folium los
+    renderiza, y reusar el mismo objeto entre reruns causa
+    'OrderedDict mutated during iteration'). Lo que sí reutilizamos de caché
+    es el trabajo pesado que es seguro cachear: el geojson leído de disco y
+    el HTML de los popups (ambos son datos inmutables, no objetos con estado)."""
     geojson = cargar_geojson()
-    df_filtrado = _filtrar_iec(_iec_df_full, region_sel, nivel_sel, solo_pdet, solo_cd)
-    return construir_mapa(df_filtrado, geojson, codigo_seleccionado=codigo_sel)
+    popups_html = _popups_por_codigo(iec_df_full)
+    df_filtrado = _filtrar_iec(iec_df_full, region_sel, nivel_sel, solo_pdet, solo_cd)
+    return construir_mapa(df_filtrado, geojson, codigo_seleccionado=codigo_sel, popups_html=popups_html)
 
 
 def render_mapa():
@@ -341,16 +351,25 @@ def render_mapa():
     df_filtrado = _filtrar_iec(iec_df, region_sel, nivel_sel, solo_pdet, solo_cd)
     st.markdown(f"**{len(df_filtrado)} municipios** seleccionados")
 
-    mapa = _construir_mapa_cacheado(iec_df, region_sel, nivel_sel, solo_pdet, solo_cd, codigo_sel)
+    mapa = _construir_mapa_con_filtros(iec_df, region_sel, nivel_sel, solo_pdet, solo_cd, codigo_sel)
 
     # OJO: ya NO pasamos returned_objects=[]; necesitamos que st_folium
     # devuelva el municipio sobre el que el usuario hizo clic.
+    #
+    # El "key" tiene que cambiar cuando cambian los filtros. Si se deja fijo,
+    # streamlit-folium intenta reutilizar el mismo contenedor Leaflet y
+    # "parchar" el mapa anterior con el nuevo en vez de recrearlo desde cero,
+    # lo cual rompe con "Map container is already initialized" y variables
+    # geo_json_XXXX no definidas cuando la estructura del mapa cambia mucho
+    # (como al resaltar un municipio distinto). Con un key dinámico, cada
+    # combinación de filtros obtiene su propio contenedor limpio.
+    key_mapa = f"mapa_principal_{region_sel}_{nivel_sel}_{solo_pdet}_{solo_cd}_{codigo_sel}"
     salida = st_folium(
         mapa,
         use_container_width=True,
         height=650,
         returned_objects=["last_active_drawing"],
-        key="mapa_principal",
+        key=key_mapa,
     )
 
     # --- Panel de análisis con IA del municipio seleccionado -----------
